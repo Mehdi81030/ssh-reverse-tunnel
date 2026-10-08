@@ -17,15 +17,17 @@ printf 'Mode=reverse\nIranPort=60250\n' > "$BASE/a-live/summary"
 printf 'direct\n' > "$BASE/b-receiver/receiver"
 printf 'Match User svt-b-receiver\n    PermitListen none\n' > "$DROP/00-ssh-v2ray-b-receiver.conf"
 printf 'temporary-key\n' > "$BASE/c-key/id_ed25519"
-list_profiles <<< $'99\nx\n2\nn\n3\ny\nr\n0' > "$scratch/output.txt"
+list_profiles <<< $'99\nx\n2\n9\nn\n\n0\n3\n9\ny\n\nr\n0' > "$scratch/output.txt"
 [[ -d $BASE/a-live && -d $BASE/b-receiver && ! -e $BASE/c-key ]]
 [[ -f $DROP/00-ssh-v2ray-b-receiver.conf ]]
-grep -q 'a-live.*reverse.*60250.*active' "$scratch/output.txt"
-grep -q 'b-receiver.*direct.*Configured' "$scratch/output.txt"
+grep -q 'a-live.*active.*reverse' "$scratch/output.txt"
+grep -q 'b-receiver.*configured.*direct' "$scratch/output.txt"
 grep -q "Delete tunnel 'c-key'" "$scratch/output.txt"
 grep -q 'That row does not exist' "$scratch/output.txt"
-grep -q 'Enter a valid row number' "$scratch/output.txt"
-echo 'PASS table: all profiles shown; invalid rows rejected; cancel preserved receiver; selected key-only profile deleted'
+grep -q 'Enter a row number' "$scratch/output.txt"
+grep -q 'Select a service to manage' "$scratch/output.txt"
+grep -q 'Details:' "$scratch/output.txt"
+echo 'PASS table: service selection opens details; invalid rows rejected; cancel preserved profile; named delete removed only selected profile'
 mkdir -p "$scratch/empty"
 BASE=$scratch/empty
 list_profiles > "$scratch/empty.txt"

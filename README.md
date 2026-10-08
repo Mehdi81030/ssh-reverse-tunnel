@@ -1,6 +1,6 @@
 # SSH Reverse Tunnel
 
-A Bash manager for **reverse and direct SSH port-forwarding tunnels** between two Linux servers, with an automatically colored menu inspired by [BackPack](https://github.com/AminMGMT/BackPack). Supports V2Ray/Xray TCP inbounds and other TCP services.
+A Bash manager for **reverse and direct SSH port-forwarding tunnels** between two Linux servers, with a colored service table and a details/actions screen for each tunnel. Supports V2Ray/Xray TCP inbounds and other TCP services.
 
 [راهنمای فارسی](README-fa.md)
 
@@ -13,14 +13,13 @@ curl -fL --retry 3 -o ssh-tunnel.sh https://raw.githubusercontent.com/Mehdi81030
 sudo bash ssh-tunnel.sh
 ```
 
-Or clone this repository and run `sudo bash ssh-tunnel.sh`. **Colors are enabled by default; no extra flag is needed.** The interface uses red numbers and accents, bold white titles, and gray descriptions. Disable colors only when needed with `--no-color` or `NO_COLOR=1`.
+Or clone this repository and run `sudo bash ssh-tunnel.sh`. **Colors are enabled by default; no extra flag is needed.** The interface uses cyan tables and section headings, green active states, yellow options, red stop/delete actions, and white values. Disable colors only when needed with `--no-color` or `NO_COLOR=1`.
 
 ```text
   1) Setup Reverse         Kharej connects to Iran
   2) Setup Direct          Iran connects to Kharej
-  3) Manage Tunnels        table, status and deletion
-  4) Status & Logs         view logs, start, stop, restart
-  5) Public Key            generate or copy your public key
+  3) Manage Tunnels        select a service, view details and actions
+  4) Public Key            generate or copy your public key
   0) Exit                  close this menu
 ```
 
@@ -32,9 +31,18 @@ Or clone this repository and run `sudo bash ssh-tunnel.sh`. **Colors are enabled
 - Reuses existing Ed25519 keys and asks you to compare host key fingerprints.
 - A systemd service starts after boot and reconnects after disconnection.
 - Multiple independent tunnels, each with its own profile name and Iran entry port.
-- A tunnel table with row selection and a named confirmation for deletion.
+- A service table opens a details/actions page for the selected tunnel.
+- Start, stop, restart, view status/logs/configuration, edit settings, manage auto-restart and delete a selected service.
 - SSH debug logs and connection settings are saved even when setup fails.
 - Status and logs work on both receivers and initiators.
+
+## Interface
+
+Example service screens rendered from the actual menu output. Your terminal theme controls the background and font.
+
+![Service table](assets/service-table.png)
+
+![Service details and actions](assets/service-details.png)
 
 ## Requirements
 
@@ -81,14 +89,32 @@ Kharej must allow its SSH port, and Iran must allow the client entry port. The b
 |---|---|
 | 1 | Set up Reverse |
 | 2 | Set up Direct |
-| 3 | Manage Tunnels: table and deletion |
-| 4 | Status & Logs: start, stop and restart |
-| 5 | Public Key |
+| 3 | Manage Tunnels: service table and actions |
+| 4 | Public Key |
 | 0 | Exit |
 
-Option **3** shows the profile name, mode, Iran entry port (when known), and local status. Enter a row number to delete that profile and confirm its name. The table refreshes after deletion; enter `r` to refresh or `0` to return. Deletion affects this server only. Remove the matching profile on the other server separately.
+Option **3** shows **Service Name, Status, Mode and Auto Restart**. Enter a row number to open that service's details and actions. Enter `r` to refresh the table or `0` to return. Selecting a row does not delete anything.
 
-`Configured` means the receiver's local configuration is prepared; the actual tunnel service runs on the initiator. `active` means the local service is running. Test with a real client to confirm end-to-end service health.
+The details box shows the Iran entry port, SSH peer/port, V2Ray endpoint, auto-restart policy and boot startup setting. Older receiver profiles may show `-` for settings that were not saved by earlier versions.
+
+| Service action | Function |
+|---|---|
+| 1 / 2 / 3 | Start / Stop / Restart the dedicated tunnel service |
+| 4 | Show Status |
+| 5 | View Recent Logs, including the last setup attempt |
+| 6 | Edit Configuration and restart the service |
+| 7 | View Configuration without showing private key contents |
+| 8 | Auto-Restart Management using systemd |
+| 9 | Delete Service after confirming its name |
+| 0 | Back to the table |
+
+Start/Stop/Restart, Edit and Auto-Restart controls appear on the server running the dedicated tunnel service. On an SSH receiver, status, logs, configuration and deletion are available; shared sshd is not stopped or restarted from this page. `configured` means receiver settings are prepared; `active` means the local tunnel process is running. Test with a real client to confirm end-to-end health. `Auto Restart: Remote` means its policy is managed on the other server.
+
+Editing validates the entered addresses and ports, verifies the host fingerprint when the SSH peer changes, and preserves the prior configuration if applying the service change fails. When changing the entry port or backend, update the matching receiver permissions separately. Changes that start successfully can still fail to connect; inspect Recent Logs and test the client.
+
+Auto-restart management changes the selected tunnel's systemd restart policy. Applying it to an active tunnel restarts that tunnel after confirmation. This setting is separate from starting the service after boot.
+
+To delete, select the service, choose **9**, and confirm its name. Deletion affects this server only. Remove the matching profile on the other server separately.
 
 For multiple Kharej servers, use a different tunnel name and Iran entry port for each. Backend ports may be identical on separate servers. This does not provide automatic load balancing or failover between backends.
 
@@ -96,7 +122,7 @@ For multiple Kharej servers, use a different tunnel name and Iran entry port for
 
 Setup automatically tests SSH with a 30-second timeout and prints the last 80 lines of debug output on failure. Exit code **124** means the test reached its time limit; it does not identify the cause by itself. Settings are saved for the tunnel table and diagnostics. If setup failed before creating a service, run Setup Reverse or Setup Direct again with the same profile name to retry.
 
-Option **4** shows setup logs even if no tunnel service was created. On the receiver it shows SSH service logs and account configuration. If `AllowUsers`, `AllowGroups`, `DisableForwarding` or other SSH restrictions are configured, ensure the dedicated tunnel account is permitted. Entering an SSH port in this script does not change sshd's listening port.
+**Manage Tunnels -> select a service -> 5: View Recent Logs** shows setup logs even if no tunnel service was created. On the receiver it shows SSH service logs. Use **7: View Configuration** for account permissions. If `AllowUsers`, `AllowGroups`, `DisableForwarding` or other SSH restrictions are configured, ensure the dedicated tunnel account is permitted. Entering an SSH port in this script does not change sshd's listening port.
 
 For profile `main`:
 
@@ -133,10 +159,11 @@ Only copy public keys between servers. SSH encrypts the server-to-server segment
 bash -n ssh-tunnel.sh
 bash tests/dependencies.sh
 bash tests/table.sh
+bash tests/service-menu.sh
 sudo bash tests/integration.sh
 ```
 
-The dependency test mocks package managers and systemctl, checking automatic apt/dnf installation, reuse of existing tools and receiver service activation without restarting a running service. The integration test needs OpenSSH, Python 3, curl, iproute and systemd tools. It creates a temporary localhost SSH daemon and tests real HTTP forwarding in both directions, rejection of shell sessions, timeout logging and menu recovery. Ports `32222` through `32226` must be free. It does not modify the host's production sshd configuration or accounts. VPS connectivity and production capacity are not covered by these local tests.
+The dependency and service-menu tests mock package managers/systemctl, checking automatic installation, service selection, controls, editing rollback, auto-restart management and deletion without touching shared sshd or exposing private keys. The integration test needs OpenSSH, Python 3, curl, iproute and systemd tools. It creates a temporary localhost SSH daemon and tests real HTTP forwarding in both directions, rejection of shell sessions, timeout logging and menu recovery. Ports `32222` through `32226` must be free. It does not modify the host's production sshd configuration or accounts. VPS connectivity and production capacity are not covered by these local tests.
 
 ## License
 

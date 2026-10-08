@@ -5,18 +5,18 @@ export LC_ALL=C
 umask 077
 BASE=/etc/ssh-v2ray-tunnel
 DROP=/etc/ssh/sshd_config.d
+UNIT_DIR=/etc/systemd/system
 [[ ${1:-} == --help ]] && { printf 'Usage: sudo bash %s [--no-color]\nColors are enabled by default. Linux + systemd; TCP forwarding only.\nSee README-fa.md.\n' "$0"; exit 0; }
 C_RESET='' C_CYAN='' C_GREEN='' C_RED='' C_YELLOW='' C_BOLD='' C_WHITE='' C_GRAY=''
 if [[ -z ${NO_COLOR:-} && ${1:-} != --no-color ]]; then
   C_RESET=$'\033[0m' C_RED=$'\033[31m' C_WHITE=$'\033[37m'
   C_GRAY=$'\033[90m' C_BOLD=$'\033[1m'
-  # Existing status and table helpers use the same red / white / gray palette.
-  C_CYAN=$C_RED C_GREEN=$C_WHITE C_YELLOW=$C_GRAY
+  C_CYAN=$'\033[36m' C_GREEN=$'\033[32m' C_YELLOW=$'\033[33m'
 fi
 trap 'printf "\n%s[ERROR]%s Command failed at line %s. See the message above.\n" "$C_RED" "$C_RESET" "$LINENO" >&2' ERR
 
 say() { printf '\n%s%s%s%s\n' "$C_BOLD" "$C_WHITE" "$*" "$C_RESET"; }
-ok() { printf '\n%s%s[OK] %s%s\n' "$C_BOLD" "$C_WHITE" "$*" "$C_RESET"; }
+ok() { printf '\n%s[OK] %s%s\n' "$C_GREEN" "$*" "$C_RESET"; }
 warn() { printf '\n%s[NOTE] %s%s\n' "$C_YELLOW" "$*" "$C_RESET"; }
 die() { printf '\n%s[ERROR] %s%s\n' "$C_RED" "$*" "$C_RESET" >&2; exit 1; }
 ask() {
@@ -305,6 +305,7 @@ receiver() {
     die 'SSH configuration validation failed. SSH changes were rolled back.'
   fi
   reload_sshd
+  printf 'Mode=%s\nRemote=-\nSSHPort=%s\nIranPort=%s\nBackend=%s:%s\n' "$MODE" "$SSH_PORT" "${LISTEN_PORT:--}" "${BACKEND:--}" "${V2_PORT:--}" > "$DIR/summary"
   ok "Receiver ready. Tunnel: $NAME | SSH user: $ACCOUNT | SSH port: $SSH_PORT"
   show_host_fingerprints
   say "Allow SSH port $SSH_PORT/TCP in the firewall."
@@ -380,7 +381,7 @@ initiator() {
   # Save BEFORE testing so failures remain diagnosable from the menu.
   save_summary
   connection_test || return 1
-  write_unit "/etc/systemd/system/$UNIT"
+  write_unit "$UNIT_DIR/$UNIT"
   printf '%s\n' "$MODE" > "$DIR/initiator"
   systemctl daemon-reload
   systemctl enable --now "$UNIT"
@@ -423,7 +424,7 @@ explain_failure() {
   say 'Last 80 lines of the SSH debug log:'
   tail -n 80 "$DIR/test.log"
   warn "Full log: $DIR/test.log"
-  say 'Use menu 4 to view logs. To retry, run Setup Reverse or Setup Direct again.'
+  say 'Use Manage Tunnels -> select this service -> View Recent Logs. To retry, run Setup again.'
 }
 connection_test() {
   say "Testing SSH -> $ACCOUNT@$REMOTE:$SSH_PORT (maximum 30 seconds)..."
@@ -447,106 +448,282 @@ connection_test() {
   timeout 5s ssh -S "$control" -O exit -p "$SSH_PORT" "$ACCOUNT@$REMOTE" >/dev/null 2>&1
   ok 'SSH authentication and port forwarding succeeded.'
 }
+clear_screen() {
+  if [[ -t 0 && -t 1 && ${TERM:-dumb} != dumb ]]; then printf '\033[H\033[2J'; fi
+}
+profile_info() {
+  select_profile "$1"
+  P_KIND=key P_MODE='-' P_ENTRY='-' P_REMOTE='-' P_SSH='-' P_BACKEND='-'
+  P_STATE='Not set up' P_AUTO='-' P_BOOT='-'
+  local field value restart
+  if [[ -f $DIR/summary ]]; then
+    P_STATE=Incomplete
+    while IFS='=' read -r field value; do
+      case $field in
+        Mode) P_MODE=$value;; IranPort) P_ENTRY=$value;; Remote) P_REMOTE=$value;;
+        SSHPort) P_SSH=$value;; Backend) P_BACKEND=$value;;
+      esac
+    done < "$DIR/summary"
+  fi
+  if [[ -f $DIR/initiator ]]; then
+    P_KIND=service P_MODE=$(cat "$DIR/initiator")
+    P_STATE=$(systemctl is-active "$UNIT" 2>/dev/null || true)
+    case $P_STATE in active|inactive|failed|activating|deactivating) ;; *) P_STATE=unknown;; esac
+    restart=$(systemctl show -p Restart --value "$UNIT" 2>/dev/null || true)
+    case $restart in no) P_AUTO=No;; always|on-*) P_AUTO=Yes;; *) P_AUTO='-';; esac
+    if systemctl is-enabled --quiet "$UNIT" 2>/dev/null; then P_BOOT=Yes; else P_BOOT=No; fi
+  elif [[ -f $DIR/receiver ]]; then
+    P_KIND=receiver P_MODE=$(cat "$DIR/receiver") P_STATE=configured P_AUTO=Remote
+    if [[ -f $SNIPPET ]]; then
+      while read -r field value; do
+        if [[ $field == PermitListen && $value == 0.0.0.0:* ]]; then P_ENTRY=${value##*:}; fi
+        if [[ $field == PermitOpen && $value != none ]]; then P_BACKEND=$value; fi
+      done < "$SNIPPET"
+    else
+      P_STATE=Incomplete
+    fi
+  fi
+  [[ $P_MODE == reverse || $P_MODE == direct ]] || P_MODE='-'
+  [[ $P_ENTRY =~ ^[0-9]{1,5}$ ]] || P_ENTRY='-'
+  [[ $P_SSH =~ ^[0-9]{1,5}$ ]] || P_SSH='-'
+  [[ $P_BACKEND != '-:-' ]] || P_BACKEND='-'
+}
+state_color() {
+  case $1 in active|Yes) printf '%s' "$C_GREEN";; failed) printf '%s' "$C_RED";;
+    configured|Remote) printf '%s' "$C_CYAN";; *) printf '%s' "$C_YELLOW";; esac
+}
+table_rule() {
+  local left joint right width segment
+  case $1 in top) left='┌' joint='┬' right='┐';; middle) left='├' joint='┼' right='┤';; bottom) left='└' joint='┴' right='┘';; esac
+  printf '%s%s' "$C_CYAN" "$left"
+  local first=true
+  for width in 3 20 11 7 12; do
+    if ! $first; then printf '%s' "$joint"; fi
+    first=false
+    printf -v segment '%*s' "$((width+2))" ''
+    printf '%s' "${segment// /─}"
+  done
+  printf '%s%s\n' "$right" "$C_RESET"
+}
+table_cell() {
+  printf '%s│%s %s%-*.*s%s ' "$C_CYAN" "$C_RESET" "$3" "$1" "$1" "$2" "$C_RESET"
+}
+table_row() {
+  local status_color auto_color
+  status_color=$(state_color "$3")
+  auto_color=$(state_color "$5")
+  table_cell 3 "$1" "$C_WHITE"
+  table_cell 20 "$2" "$C_WHITE"
+  table_cell 11 "$3" "$status_color"
+  table_cell 7 "$4" "$C_WHITE"
+  table_cell 12 "$5" "$auto_color"
+  printf '%s│%s\n' "$C_CYAN" "$C_RESET"
+}
 list_profiles() {
   need_runtime
-  local profile name mode entry state field value choice index row_color
-  local border='+----+----------------------+---------+-----------+--------------+'
+  local profile name choice index
   local -a rows=()
   while :; do
+    clear_screen
     rows=()
-    say 'TUNNELS ON THIS SERVER'
-    printf '%s%s\n' "$C_CYAN" "$border"
-    printf '| %-2s | %-20s | %-7s | %-9s | %-12s |\n' '#' 'Name' 'Mode' 'Iran port' 'Status'
-    printf '%s%s\n' "$border" "$C_RESET"
+    printf '\n%sServices%s\n\n' "$C_CYAN" "$C_RESET"
+    table_rule top
+    table_cell 3 '#' "$C_CYAN"
+    table_cell 20 'Service Name' "$C_CYAN"
+    table_cell 11 'Status' "$C_CYAN"
+    table_cell 7 'Mode' "$C_CYAN"
+    table_cell 12 'Auto Restart' "$C_CYAN"
+    printf '%s│%s\n' "$C_CYAN" "$C_RESET"
+    table_rule middle
     for profile in "$BASE"/*; do
       [[ -d $profile && ! -L $profile ]] || continue
       name=${profile##*/}
       [[ $name =~ ^[a-z][a-z0-9-]{0,19}$ ]] || continue
       rows+=("$name")
-      mode='-' entry='-' state='Not set up'
-      if [[ -f $profile/summary ]]; then
-        state='Incomplete'
-        while IFS='=' read -r field value; do
-          case $field in Mode) mode=$value;; IranPort) entry=$value;; esac
-        done < "$profile/summary"
-      fi
-      if [[ -f $profile/initiator ]]; then
-        mode=$(cat "$profile/initiator")
-        state=$(systemctl is-active "ssh-v2ray-$name.service" 2>/dev/null || true)
-        case $state in active|inactive|failed|activating|deactivating) ;; *) state='unknown';; esac
-      elif [[ -f $profile/receiver ]]; then
-        mode=$(cat "$profile/receiver") state='Configured'
-        if [[ -f $DROP/00-ssh-v2ray-$name.conf ]]; then
-          while read -r field value; do
-            if [[ $field == PermitListen && $value == 0.0.0.0:* ]]; then entry=${value##*:}; fi
-          done < "$DROP/00-ssh-v2ray-$name.conf"
-        else
-          state='Incomplete'
-        fi
-      fi
-      [[ $mode == direct || $mode == reverse ]] || mode='-'
-      [[ $entry =~ ^[0-9]{1,5}$ ]] || entry='-'
-      row_color=$C_YELLOW
-      [[ $state != active && $state != Configured ]] || row_color=$C_GREEN
-      [[ $state != failed ]] || row_color=$C_RED
-      printf '%s| %-2s | %-20s | %-7s | %-9s | %-12s |%s\n' "$row_color" "${#rows[@]}" "$name" "$mode" "$entry" "$state" "$C_RESET"
+      profile_info "$name"
+      table_row "${#rows[@]}" "$name" "$P_STATE" "$P_MODE" "$P_AUTO"
     done
-    printf '%s%s%s\n' "$C_CYAN" "$border" "$C_RESET"
+    table_rule bottom
     if (( ${#rows[@]} == 0 )); then
       say 'No tunnels have been configured yet.'
       return 0
     fi
-    printf '\n  Enter a row number to delete that tunnel.\n  r = Refresh table | 0 = Back\n'
-    ask choice 'Delete row / action' '0'
-    case ${choice,,} in
-      0) return 0;;
-      r) continue;;
-    esac
-    if [[ ! $choice =~ ^[0-9]{1,6}$ ]]; then
-      warn 'Enter a valid row number, r, or 0.'
-      continue
-    fi
+    printf '\n%sOptions:%s\n' "$C_YELLOW" "$C_RESET"
+    printf '  %s0.%s Back to Main Menu\n' "$C_WHITE" "$C_RESET"
+    printf '  %s1-%s.%s Select a service to manage\n' "$C_WHITE" "${#rows[@]}" "$C_RESET"
+    printf '  %sr.%s Refresh\n\n' "$C_WHITE" "$C_RESET"
+    ask choice 'Select a service' '0'
+    case ${choice,,} in 0) return 0;; r) continue;; esac
+    if [[ ! $choice =~ ^[0-9]{1,6}$ ]]; then warn 'Enter a row number, r, or 0.'; continue; fi
     index=$((10#$choice))
-    if (( index < 1 || index > ${#rows[@]} )); then
-      warn 'That row does not exist.'
-      continue
-    fi
-    remove_profile "${rows[index-1]}"
+    if (( index < 1 || index > ${#rows[@]} )); then warn 'That row does not exist.'; continue; fi
+    service_menu "${rows[index-1]}"
   done
 }
-manage() {
-  need_runtime
-  get_name
-  [[ -d $DIR ]] || die 'No profile with this name.'
-  if [[ -f $DIR/receiver ]]; then
-    ok 'This server is the SSH receiver. The tunnel service runs on the other server.'
-    [[ ! -f $SNIPPET ]] || cat "$SNIPPET"
-    say 'Recent SSH receiver logs (last 15 minutes):'
-    journalctl -u ssh.service -u sshd.service --since '15 minutes ago' -n 60 --no-pager
-    return 0
+detail_rule() {
+  local segment left right
+  if [[ $1 == top ]]; then left='┌'; right='┐'; else left='└'; right='┘'; fi
+  printf -v segment '%*s' 62 ''
+  printf '%s%s%s%s%s\n' "$C_CYAN" "$left" "${segment// /─}" "$right" "$C_RESET"
+}
+detail_row() {
+  printf '%s│%s %-18s %s:%s %s%-39.39s%s %s│%s\n' "$C_CYAN" "$C_WHITE" "$1" "$C_CYAN" "$C_RESET" "${3:-$C_WHITE}" "$2" "$C_RESET" "$C_CYAN" "$C_RESET"
+}
+service_action_line() {
+  printf '  %s%2s.%s %s%s%s %s\n' "$C_WHITE" "$1" "$C_RESET" "$3" "$2" "$C_RESET" "$4"
+}
+render_service() {
+  clear_screen
+  printf '\n%sService: %s%s\n\n' "$C_CYAN" "$NAME" "$C_RESET"
+  printf '%sStatus:%s\n  %s● %s%s\n\n' "$C_CYAN" "$C_RESET" "$(state_color "$P_STATE")" "$P_STATE" "$C_RESET"
+  printf '%sDetails:%s\n' "$C_CYAN" "$C_RESET"
+  detail_rule top
+  detail_row 'Mode' "$P_MODE"
+  detail_row 'Iran Entry Port' "$P_ENTRY"
+  detail_row 'SSH Peer' "$P_REMOTE"
+  detail_row 'SSH Port' "$P_SSH"
+  detail_row 'V2Ray Endpoint' "$P_BACKEND"
+  detail_row 'Auto Restart' "$P_AUTO" "$(state_color "$P_AUTO")"
+  detail_row 'Start After Boot' "$P_BOOT" "$(state_color "$P_BOOT")"
+  detail_rule bottom
+  printf '\n%sActions%s\n' "$C_CYAN" "$C_RESET"
+  if [[ $P_KIND == service ]]; then
+    service_action_line 1 '[+]' "$C_GREEN" 'Start'
+    service_action_line 2 '[-]' "$C_RED" 'Stop'
+    service_action_line 3 '[~]' "$C_CYAN" 'Restart'
   fi
-  if [[ ! -f $DIR/initiator ]]; then
-    warn 'Setup is incomplete. No tunnel service was created yet.'
-    [[ ! -f $DIR/summary ]] || cat "$DIR/summary"
-    if [[ -s $DIR/test.log ]]; then
-      say 'Last setup attempt:'
-      tail -n 80 "$DIR/test.log"
-    else
-      warn 'No SSH debug log yet. Run Setup Reverse or Setup Direct first.'
-    fi
-    return 0
+  service_action_line 4 '[i]' "$C_CYAN" 'Show Status'
+  service_action_line 5 '[=]' "$C_CYAN" 'View Recent Logs'
+  if [[ $P_KIND == service ]]; then service_action_line 6 '[e]' "$C_YELLOW" 'Edit Configuration'; fi
+  service_action_line 7 '[c]' "$C_CYAN" 'View Configuration'
+  if [[ $P_KIND == service ]]; then service_action_line 8 '[a]' "$C_YELLOW" 'Auto-Restart Management'; fi
+  service_action_line 9 '[x]' "$C_RED" 'Delete Service'
+  service_action_line 0 '[<]' "$C_CYAN" 'Back'
+  if [[ $P_KIND == receiver ]]; then
+    warn 'Start, Stop and Auto-Restart are managed on the other server. Auto Restart: Remote.'
   fi
-  say '1) Status  2) Service logs  3) Restart  4) Stop  5) Start  6) Last setup log'
-  local action
-  ask action 'Option' '1'
-  case $action in
-    1) systemctl --no-pager --full status "$UNIT" || true;;
-    2) journalctl -u "$UNIT" -n 80 --no-pager;;
-    3) systemctl restart "$UNIT";;
-    4) systemctl stop "$UNIT"; say 'Tunnel stopped. To disable startup after reboot, also run systemctl disable.';;
-    5) systemctl start "$UNIT";;
-    6) [[ ! -f $DIR/test.log ]] || tail -n 80 "$DIR/test.log";;
-    *) say 'Invalid option';;
+}
+service_menu() {
+  local selected=$1 action
+  while [[ -d $BASE/$selected ]]; do
+    profile_info "$selected"
+    render_service
+    ask action 'Select an action' '0'
+    [[ $action != 0 ]] || return 0
+    case $action in
+      1|2|3|4|5|6|7|8|9) run_action service_action "$action";;
+      *) warn 'Invalid action';;
+    esac
+  done
+}
+show_service_status() {
+  if [[ $P_KIND == service ]]; then
+    systemctl --no-pager --full status "$UNIT" || true
+  elif [[ $P_KIND == receiver ]]; then
+    find_sshd
+    "$SSHD" -t
+    ok 'Dedicated SSH configuration is valid.'
+    if [[ $P_ENTRY =~ ^[0-9]+$ ]]; then ss -ltnp "sport = :$P_ENTRY"; fi
+  else
+    warn 'No tunnel service has been created. Run Setup to finish this profile.'
+  fi
+}
+show_service_logs() {
+  if [[ $P_KIND == service ]]; then
+    journalctl -u "$UNIT" -n 80 --no-pager
+  elif [[ $P_KIND == receiver ]]; then
+    journalctl -u ssh.service -u sshd.service --since '15 minutes ago' -n 80 --no-pager
+  fi
+  if [[ -s $DIR/test.log ]]; then
+    say 'Last setup attempt:'
+    tail -n 80 "$DIR/test.log"
+  elif [[ $P_KIND == key ]]; then
+    warn 'No logs yet. Run Setup Reverse or Setup Direct first.'
+  fi
+}
+show_service_config() {
+  if [[ -f $DIR/summary ]]; then say 'Saved settings:'; cat "$DIR/summary"; fi
+  if [[ $P_KIND == service ]]; then
+    say 'Systemd configuration:'
+    systemctl cat "$UNIT" --no-pager
+  elif [[ $P_KIND == receiver && -f $SNIPPET ]]; then
+    say 'Dedicated SSH configuration:'
+    cat "$SNIPPET"
+  else
+    warn 'This profile has no installed service configuration yet.'
+  fi
+}
+edit_service_config() {
+  [[ $P_KIND == service && $P_MODE != '-' ]] || { warn 'No editable tunnel service on this server.'; return 0; }
+  MODE=$P_MODE
+  get_host REMOTE 'SSH peer IPv4 address or hostname' "$P_REMOTE"
+  get_port SSH_PORT 'SSH port' "$P_SSH"
+  get_port LISTEN_PORT 'Iran entry port' "$P_ENTRY"
+  get_host BACKEND 'V2Ray address on Kharej' "${P_BACKEND%:*}"
+  get_port V2_PORT 'V2Ray TCP port on Kharej' "${P_BACKEND##*:}"
+  if [[ $MODE == reverse ]]; then
+    (( LISTEN_PORT >= 1024 )) || die 'The reverse entry port must be 1024 or higher.'
+    [[ $LISTEN_PORT != "$SSH_PORT" ]] || die 'Iran entry port must differ from the Iran SSH port.'
+  fi
+  warn 'The matching server must allow the new Iran port / V2Ray endpoint. Update its forwarding permissions separately if needed.'
+  confirm "Apply changes and restart tunnel '$NAME'?" || return 0
+  [[ -f $DIR/summary && -f $UNIT_DIR/$UNIT ]] || die 'Saved settings or the service file are missing.'
+  cp -p "$DIR/summary" "$DIR/summary.before-edit"
+  cp -p "$UNIT_DIR/$UNIT" "$DIR/unit.before-edit"
+  local host_backup=false
+  if [[ -f $DIR/known_hosts ]]; then cp -p "$DIR/known_hosts" "$DIR/known_hosts.before-edit"; host_backup=true; fi
+  if [[ $REMOTE != "$P_REMOTE" || $SSH_PORT != "$P_SSH" || ! -s $DIR/known_hosts ]]; then
+    trust_host || return 0
+  fi
+  build_ssh_args
+  write_unit "$DIR/$UNIT"
+  if command -v systemd-analyze >/dev/null && ! systemd-analyze verify "$DIR/$UNIT"; then
+    if $host_backup; then cp -p "$DIR/known_hosts.before-edit" "$DIR/known_hosts"; fi
+    die 'New service configuration failed validation. Existing configuration was kept.'
+  fi
+  cp "$DIR/$UNIT" "$UNIT_DIR/$UNIT"
+  save_summary
+  if ! systemctl daemon-reload || ! systemctl restart "$UNIT"; then
+    cp -p "$DIR/unit.before-edit" "$UNIT_DIR/$UNIT"
+    cp -p "$DIR/summary.before-edit" "$DIR/summary"
+    if $host_backup; then cp -p "$DIR/known_hosts.before-edit" "$DIR/known_hosts"; fi
+    systemctl daemon-reload
+    systemctl restart "$UNIT" || true
+    die 'Could not apply the service change. Previous settings were restored.'
+  fi
+  rm -f "$DIR/$UNIT"
+  ok 'Configuration saved and service restarted. Check Recent Logs and test with a VLESS client.'
+}
+auto_restart_menu() {
+  [[ $P_KIND == service ]] || { warn 'Auto-Restart is managed on the other server.'; return 0; }
+  printf '\n%sAuto-Restart Management%s\n  1. Enable\n  2. Disable\n  0. Back\n' "$C_CYAN" "$C_RESET"
+  local choice policy was_active=false
+  ask choice 'Select' '0'
+  case $choice in 0) return 0;; 1) policy=always;; 2) policy=no;; *) warn 'Invalid option'; return 0;; esac
+  if systemctl is-active --quiet "$UNIT"; then was_active=true; fi
+  if $was_active; then
+    confirm "Apply auto-restart policy and restart tunnel '$NAME'?" || return 0
+  fi
+  mkdir -p "$UNIT_DIR/$UNIT.d"
+  printf '[Service]\nRestart=%s\n' "$policy" > "$UNIT_DIR/$UNIT.d/ssh-tunnel-auto-restart.conf"
+  systemctl daemon-reload
+  if $was_active; then systemctl restart "$UNIT"; fi
+  ok 'Auto-restart policy saved. It applies now or on the next service start.'
+}
+service_action() {
+  case $1 in
+    1|2|3)
+      [[ $P_KIND == service ]] || { warn 'This action is available on the server running the tunnel service.'; return 0; }
+      local operation
+      case $1 in 1) operation=start;; 2) operation=stop;; 3) operation=restart;; esac
+      systemctl "$operation" "$UNIT"
+      ok "Service action completed: $operation";;
+    4) show_service_status;;
+    5) show_service_logs;;
+    6) edit_service_config;;
+    7) show_service_config;;
+    8) auto_restart_menu;;
+    9) remove_profile "$NAME";;
   esac
 }
 remove_profile() {
@@ -571,7 +748,9 @@ remove_profile() {
   fi
   if [[ -f $DIR/initiator ]]; then
     systemctl disable --now "$UNIT"
-    rm -f "/etc/systemd/system/$UNIT"
+    rm -f "$UNIT_DIR/$UNIT"
+    rm -f "$UNIT_DIR/$UNIT.d/ssh-tunnel-auto-restart.conf"
+    if [[ -d $UNIT_DIR/$UNIT.d ]]; then rmdir "$UNIT_DIR/$UNIT.d" 2>/dev/null || true; fi
     systemctl daemon-reload
   fi
   [[ $DIR == "$BASE/"* && $DIR != "$BASE/" ]] || die 'Invalid removal path.'
@@ -611,11 +790,11 @@ run_action() {
 }
 menu_item() {
   printf '  %s%2s)%s %s%s%-21s%s %s%s%s\n' \
-    "$C_RED" "$1" "$C_RESET" "$C_BOLD" "$C_WHITE" "$2" "$C_RESET" "$C_GRAY" "${3:-}" "$C_RESET"
+    "$C_CYAN" "$1" "$C_RESET" "$C_BOLD" "$C_WHITE" "$2" "$C_RESET" "$C_GRAY" "${3:-}" "$C_RESET"
 }
 render_menu() {
   if [[ -t 0 && -t 1 && ${TERM:-dumb} != dumb ]]; then printf '\033[H\033[2J'; fi
-  printf '\n%s%s' "$C_BOLD" "$C_RED"
+  printf '\n%s%s' "$C_BOLD" "$C_CYAN"
   cat <<'BANNER'
    ____  ____  _   _
   / ___|/ ___|| | | |
@@ -628,9 +807,8 @@ BANNER
   printf '%s---------------------------------------------------------------%s\n\n' "$C_GRAY" "$C_RESET"
   menu_item 1 'Setup Reverse' 'Kharej connects to Iran'
   menu_item 2 'Setup Direct' 'Iran connects to Kharej'
-  menu_item 3 'Manage Tunnels' 'table, status and deletion'
-  menu_item 4 'Status & Logs' 'view logs, start, stop, restart'
-  menu_item 5 'Public Key' 'generate or copy your public key'
+  menu_item 3 'Manage Tunnels' 'select a service, view details and actions'
+  menu_item 4 'Public Key' 'generate or copy your public key'
   menu_item 0 'Exit' 'close this menu'
   printf '\n%s---------------------------------------------------------------%s\n' "$C_GRAY" "$C_RESET"
   printf '  %sGitHub: Mehdi81030/ssh-reverse-tunnel%s\n\n' "$C_GRAY" "$C_RESET"
@@ -643,8 +821,7 @@ main() {
     ask choice 'Select' '0'
     case $choice in
       1) run_action quick_setup reverse;; 2) run_action quick_setup direct;;
-      3) run_action list_profiles;; 4) run_action manage;;
-      5) run_action make_key;; 0) exit 0;;
+      3) run_action list_profiles;; 4) run_action make_key;; 0) exit 0;;
       *) say 'Invalid option';;
     esac
   done
