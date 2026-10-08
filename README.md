@@ -20,9 +20,8 @@ Or clone this repository and run `sudo bash ssh-tunnel.sh`. **Colors are enabled
   2) Setup Direct          Iran connects to Kharej
   3) Manage Tunnels        table, status and deletion
   4) Status & Logs         view logs, start, stop, restart
-  5) Connection Test       retry and finish saved setup
-  6) Public Key            generate or copy your public key
-  7) Prerequisites         install required packages
+  5) Public Key            generate or copy your public key
+  6) Prerequisites         install required packages
   0) Exit                  close this menu
 ```
 
@@ -34,12 +33,12 @@ Or clone this repository and run `sudo bash ssh-tunnel.sh`. **Colors are enabled
 - A systemd service starts after boot and reconnects after disconnection.
 - Multiple independent tunnels, each with its own profile name and Iran entry port.
 - A tunnel table with row selection and a named confirmation for deletion.
-- SSH debug logs and retry settings are saved even when setup fails.
+- SSH debug logs and connection settings are saved even when setup fails.
 - Status and logs work on both receivers and initiators.
 
 ## Requirements
 
-Linux with systemd running, Bash, root access, and a recent OpenSSH client/server. Local checks used Ubuntu and OpenSSH 9.6. Ubuntu 22.04/24.04 or Debian 12 are suggested starting points. Menu option **7** installs dependencies using `apt` or `dnf`; other distributions require manual dependency installation.
+Linux with systemd running, Bash, root access, and a recent OpenSSH client/server. Local checks used Ubuntu and OpenSSH 9.6. Ubuntu 22.04/24.04 or Debian 12 are suggested starting points. Menu option **6** installs dependencies using `apt` or `dnf`; other distributions require manual dependency installation.
 
 Forwarding is **TCP only**. The script does not configure firewall rules, change network MTU, or modify your V2Ray/Xray configuration. Independent UDP forwarding is not supported.
 
@@ -60,7 +59,7 @@ Use the VLESS **inbound port**, not the web panel port. The Iran entry port and 
 
 ## Reverse setup
 
-1. Install prerequisites with option **7** on both machines if needed.
+1. Install prerequisites with option **6** on both machines if needed.
 2. On **Kharej**, choose **1: Setup Reverse**, then **2: Kharej**. Choose a tunnel name, for example `main`.
 3. Copy the entire displayed `ssh-ed25519 ...` public key line. Keep this terminal open.
 4. On **Iran**, choose **1: Setup Reverse**, then **1: Iran**. Use the same tunnel name, enter the Iran entry port and actual Iran SSH port, and paste the public key.
@@ -84,9 +83,8 @@ Kharej must allow its SSH port, and Iran must allow the client entry port. The b
 | 2 | Set up Direct |
 | 3 | Manage Tunnels: table and deletion |
 | 4 | Status & Logs: start, stop and restart |
-| 5 | Connection Test: retry / finish setup |
-| 6 | Public Key |
-| 7 | Prerequisites |
+| 5 | Public Key |
+| 6 | Prerequisites |
 | 0 | Exit |
 
 Option **3** shows the profile name, local role, mode, Iran entry port (when known), and local status. Enter a row number to delete that profile and confirm its name. The table refreshes after deletion; enter `r` to refresh or `0` to return. Deletion affects this server only. Remove the matching profile on the other server separately.
@@ -97,7 +95,7 @@ For multiple Kharej servers, use a different tunnel name and Iran entry port for
 
 ## Troubleshooting
 
-Setup uses a 30-second timeout and prints the last 80 lines of SSH debug output on failure. Exit code **124** means the test reached its time limit; it does not identify the cause by itself. Settings are saved before testing, so option **5** can retry without re-entering everything. Stop an active service using option **4** before retesting its forwarding port.
+Setup automatically tests SSH with a 30-second timeout and prints the last 80 lines of debug output on failure. Exit code **124** means the test reached its time limit; it does not identify the cause by itself. Settings are saved for the tunnel table and diagnostics. If setup failed before creating a service, run Setup Reverse or Setup Direct again with the same profile name to retry.
 
 Option **4** shows setup logs even if no tunnel service was created. On the receiver it shows SSH service logs and account configuration. If `AllowUsers`, `AllowGroups`, `DisableForwarding` or other SSH restrictions are configured, ensure the dedicated tunnel account is permitted. Entering an SSH port in this script does not change sshd's listening port.
 

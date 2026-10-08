@@ -369,25 +369,6 @@ initiator() {
 save_summary() {
   printf 'Mode=%s\nRemote=%s\nSSHPort=%s\nIranPort=%s\nBackend=%s:%s\n' "$MODE" "$REMOTE" "$SSH_PORT" "$LISTEN_PORT" "$BACKEND" "$V2_PORT" > "$DIR/summary"
 }
-load_summary() {
-  [[ -f $DIR/summary ]] || die 'No saved connection settings. Run Setup on the SSH-starting server first.'
-  local field value
-  MODE='' REMOTE='' SSH_PORT='' LISTEN_PORT='' BACKEND='' V2_PORT=''
-  while IFS='=' read -r field value; do
-    case $field in
-      Mode) MODE=$value;; Remote) REMOTE=$value;; SSHPort) SSH_PORT=$value;;
-      IranPort) LISTEN_PORT=$value;; Backend) BACKEND=${value%:*}; V2_PORT=${value##*:};;
-    esac
-  done < "$DIR/summary"
-  [[ $MODE == reverse || $MODE == direct ]] || die 'Invalid saved mode.'
-  [[ $REMOTE =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ && $BACKEND =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ ]] || die 'Invalid saved address.'
-  local port
-  for port in "$SSH_PORT" "$LISTEN_PORT" "$V2_PORT"; do
-    [[ $port =~ ^[0-9]{1,5}$ ]] || die 'Invalid saved port.'
-    (( 10#$port >= 1 && 10#$port <= 65535 )) || die 'Invalid saved port.'
-  done
-  [[ -f $DIR/id_ed25519 && -s $DIR/known_hosts ]] || die 'Key or trusted host file is missing. Run Setup again.'
-}
 explain_failure() {
   local result=$1
   printf '\n%s[FAILED] SSH test exit code: %s%s\n' "$C_RED" "$result" "$C_RESET"
@@ -414,7 +395,7 @@ explain_failure() {
   say 'Last 80 lines of the SSH debug log:'
   tail -n 80 "$DIR/test.log"
   warn "Full log: $DIR/test.log"
-  say 'Use menu 5 to retry saved settings, or menu 4 to view logs.'
+  say 'Use menu 4 to view logs. To retry, run Setup Reverse or Setup Direct again.'
 }
 connection_test() {
   say "Testing SSH -> $ACCOUNT@$REMOTE:$SSH_PORT (maximum 30 seconds)..."
@@ -437,25 +418,6 @@ connection_test() {
   fi
   timeout 5s ssh -S "$control" -O exit -p "$SSH_PORT" "$ACCOUNT@$REMOTE" >/dev/null 2>&1
   ok 'SSH authentication and port forwarding succeeded.'
-}
-retry_connection() {
-  need_runtime
-  need_client
-  get_name
-  load_summary
-  if systemctl is-active --quiet "$UNIT"; then
-    warn 'The tunnel is running. View logs in menu 4; stop it there before retesting its port.'
-    return 0
-  fi
-  build_ssh_args
-  connection_test || return 1
-  if confirm 'Save and start the tunnel service now?'; then
-    write_unit "/etc/systemd/system/$UNIT"
-    printf '%s\n' "$MODE" > "$DIR/initiator"
-    systemctl daemon-reload
-    systemctl enable --now "$UNIT"
-    ok 'Service started. Check menu 4 and test with a VLESS client.'
-  fi
 }
 list_profiles() {
   need_runtime
@@ -543,7 +505,7 @@ manage() {
       say 'Last setup attempt:'
       tail -n 80 "$DIR/test.log"
     else
-      warn 'No SSH debug log yet. Run Setup or menu 5 to test saved settings.'
+      warn 'No SSH debug log yet. Run Setup Reverse or Setup Direct first.'
     fi
     return 0
   fi
@@ -641,9 +603,8 @@ BANNER
   menu_item 2 'Setup Direct' 'Iran connects to Kharej'
   menu_item 3 'Manage Tunnels' 'table, status and deletion'
   menu_item 4 'Status & Logs' 'view logs, start, stop, restart'
-  menu_item 5 'Connection Test' 'retry and finish saved setup'
-  menu_item 6 'Public Key' 'generate or copy your public key'
-  menu_item 7 'Prerequisites' 'install required packages'
+  menu_item 5 'Public Key' 'generate or copy your public key'
+  menu_item 6 'Prerequisites' 'install required packages'
   menu_item 0 'Exit' 'close this menu'
   printf '\n%s---------------------------------------------------------------%s\n' "$C_GRAY" "$C_RESET"
   printf '  %sGitHub: Mehdi81030/ssh-reverse-tunnel%s\n\n' "$C_GRAY" "$C_RESET"
@@ -656,8 +617,8 @@ main() {
     ask choice 'Select' '0'
     case $choice in
       1) run_action quick_setup reverse;; 2) run_action quick_setup direct;;
-      3) run_action list_profiles;; 4) run_action manage;; 5) run_action retry_connection;;
-      6) run_action make_key;; 7) run_action install_tools;; 0) exit 0;;
+      3) run_action list_profiles;; 4) run_action manage;;
+      5) run_action make_key;; 6) run_action install_tools;; 0) exit 0;;
       *) say 'Invalid option';;
     esac
   done

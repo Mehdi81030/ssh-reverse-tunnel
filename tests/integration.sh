@@ -72,8 +72,6 @@ EOF
   write_unit "$scratch/ssh-v2ray-$MODE.service"
   systemd-analyze verify "$scratch/ssh-v2ray-$MODE.service"
   save_summary
-  load_summary
-  build_ssh_args
   connection_test > "$scratch/test-success-$MODE.txt"
   grep -q 'succeeded' "$scratch/test-success-$MODE.txt"
   [[ -s $DIR/test.log ]]
