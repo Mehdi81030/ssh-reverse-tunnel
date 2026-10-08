@@ -21,13 +21,13 @@ Or clone this repository and run `sudo bash ssh-tunnel.sh`. **Colors are enabled
   3) Manage Tunnels        table, status and deletion
   4) Status & Logs         view logs, start, stop, restart
   5) Public Key            generate or copy your public key
-  6) Prerequisites         install required packages
   0) Exit                  close this menu
 ```
 
 ## Features
 
 - Guided setup: choose Reverse or Direct, then choose Iran or Kharej.
+- Missing tools are installed automatically during setup; existing tools are reused.
 - Dedicated SSH account limited to the requested forwarding operation, with shell sessions disabled.
 - Reuses existing Ed25519 keys and asks you to compare host key fingerprints.
 - A systemd service starts after boot and reconnects after disconnection.
@@ -38,7 +38,7 @@ Or clone this repository and run `sudo bash ssh-tunnel.sh`. **Colors are enabled
 
 ## Requirements
 
-Linux with systemd running, Bash, root access, and a recent OpenSSH client/server. Local checks used Ubuntu and OpenSSH 9.6. Ubuntu 22.04/24.04 or Debian 12 are suggested starting points. Menu option **6** installs dependencies using `apt` or `dnf`; other distributions require manual dependency installation.
+Linux with systemd running, Bash, root access, and a recent OpenSSH client/server. Local checks used Ubuntu and OpenSSH 9.6. Ubuntu 22.04/24.04 or Debian 12 are suggested starting points. Setup automatically installs missing tools using `apt` or `dnf`; no separate prerequisites step is needed. Client tools are prepared on the initiator, and server/account tools are prepared on the receiver. The receiver's SSH service is started and enabled after the dependency check. Existing running SSH services are not restarted. Other distributions require manual dependency installation.
 
 Forwarding is **TCP only**. The script does not configure firewall rules, change network MTU, or modify your V2Ray/Xray configuration. Independent UDP forwarding is not supported.
 
@@ -59,7 +59,7 @@ Use the VLESS **inbound port**, not the web panel port. The Iran entry port and 
 
 ## Reverse setup
 
-1. Install prerequisites with option **6** on both machines if needed.
+1. Run the script on both machines. Required tools are prepared automatically when you start setup.
 2. On **Kharej**, choose **1: Setup Reverse**, then **2: Kharej**. Choose a tunnel name, for example `main`.
 3. Copy the entire displayed `ssh-ed25519 ...` public key line. Keep this terminal open.
 4. On **Iran**, choose **1: Setup Reverse**, then **1: Iran**. Use the same tunnel name, enter the Iran entry port and actual Iran SSH port, and paste the public key.
@@ -84,7 +84,6 @@ Kharej must allow its SSH port, and Iran must allow the client entry port. The b
 | 3 | Manage Tunnels: table and deletion |
 | 4 | Status & Logs: start, stop and restart |
 | 5 | Public Key |
-| 6 | Prerequisites |
 | 0 | Exit |
 
 Option **3** shows the profile name, local role, mode, Iran entry port (when known), and local status. Enter a row number to delete that profile and confirm its name. The table refreshes after deletion; enter `r` to refresh or `0` to return. Deletion affects this server only. Remove the matching profile on the other server separately.
@@ -132,11 +131,12 @@ Only copy public keys between servers. SSH encrypts the server-to-server segment
 
 ```bash
 bash -n ssh-tunnel.sh
+bash tests/dependencies.sh
 bash tests/table.sh
 sudo bash tests/integration.sh
 ```
 
-The integration test needs OpenSSH, Python 3, curl, iproute and systemd tools. It creates a temporary localhost SSH daemon and tests real HTTP forwarding in both directions, rejection of shell sessions, timeout logging and menu recovery. Ports `32222` through `32226` must be free. It does not modify the host's production sshd configuration or accounts. VPS connectivity and production capacity are not covered by these local tests.
+The dependency test mocks package managers and systemctl, checking automatic apt/dnf installation, reuse of existing tools and receiver service activation without restarting a running service. The integration test needs OpenSSH, Python 3, curl, iproute and systemd tools. It creates a temporary localhost SSH daemon and tests real HTTP forwarding in both directions, rejection of shell sessions, timeout logging and menu recovery. Ports `32222` through `32226` must be free. It does not modify the host's production sshd configuration or accounts. VPS connectivity and production capacity are not covered by these local tests.
 
 ## License
 

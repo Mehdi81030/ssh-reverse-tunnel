@@ -93,33 +93,61 @@ need_runtime() {
   chmod 700 "$BASE"
 }
 install_tools() {
-  need_runtime
-  say 'Installing OpenSSH and required tools...'
+  local role=$1
+  say 'Installing missing tools automatically...'
   if command -v apt-get >/dev/null; then
     apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-client openssh-server openssl iproute2 coreutils
+    local -a packages=(openssh-client iproute2 coreutils)
+    if [[ $role == receiver ]]; then packages+=(openssh-server openssl passwd procps); fi
+    DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
   elif command -v dnf >/dev/null; then
-    dnf install -y openssh-clients openssh-server openssl iproute coreutils
+    local -a packages=(openssh-clients iproute coreutils)
+    if [[ $role == receiver ]]; then packages+=(openssh-server openssl shadow-utils procps-ng); fi
+    dnf install -y "${packages[@]}"
   else
-    die 'Automatic installation supports apt and dnf. Install OpenSSH, openssl, iproute and coreutils manually.'
+    die 'Automatic installation requires apt or dnf. Install the missing tools manually on this distribution.'
   fi
-  if systemctl cat ssh.service >/dev/null 2>&1; then
-    systemctl enable --now ssh.service
-  else
-    systemctl enable --now sshd.service
+}
+ensure_tools() {
+  need_runtime
+  local role=$1 cmd
+  local -a required=(ssh ssh-keygen ssh-keyscan timeout ss) missing=()
+  if [[ $role == receiver ]]; then required+=(openssl useradd userdel pkill); fi
+  for cmd in "${required[@]}"; do
+    command -v "$cmd" >/dev/null || missing+=("$cmd")
+  done
+  if [[ $role == receiver ]] && ! command -v sshd >/dev/null && [[ ! -x /usr/sbin/sshd ]]; then
+    missing+=(sshd)
   fi
-  ok 'Tools are ready. Firewall rules were not changed automatically.'
+  if (( ${#missing[@]} > 0 )); then
+    warn "Missing tools: ${missing[*]}"
+    install_tools "$role"
+    for cmd in "${required[@]}"; do
+      command -v "$cmd" >/dev/null || die "Automatic installation did not provide $cmd. Check the package manager output."
+    done
+    [[ $role != receiver ]] || find_sshd
+    ok 'Required tools installed.'
+  fi
 }
 need_client() {
-  local cmd
-  for cmd in ssh ssh-keygen ssh-keyscan timeout; do
-    command -v "$cmd" >/dev/null || die "Missing tool: $cmd. Run the Install prerequisites menu option."
-  done
+  ensure_tools client
+}
+ensure_sshd_service() {
+  local ssh_unit
+  if systemctl cat ssh.service >/dev/null 2>&1; then
+    ssh_unit=ssh.service
+  elif systemctl cat sshd.service >/dev/null 2>&1; then
+    ssh_unit=sshd.service
+  else
+    die 'OpenSSH server service was not found after dependency checks.'
+  fi
+  if ! systemctl is-enabled --quiet "$ssh_unit"; then systemctl enable "$ssh_unit"; fi
+  if ! systemctl is-active --quiet "$ssh_unit"; then systemctl start "$ssh_unit"; fi
 }
 find_sshd() {
   SSHD=$(command -v sshd || true)
   [[ -n $SSHD ]] || SSHD=/usr/sbin/sshd
-  [[ -x $SSHD ]] || die 'sshd is missing. Run the Install prerequisites menu option.'
+  [[ -x $SSHD ]] || die 'sshd is missing. Run tunnel Setup to install it automatically.'
 }
 reload_sshd() {
   if systemctl is-active --quiet ssh.service; then
@@ -127,7 +155,7 @@ reload_sshd() {
   elif systemctl is-active --quiet sshd.service; then
     systemctl reload sshd.service
   else
-    die 'The SSH service is not running. Install prerequisites or start the service first.'
+    die 'The SSH service is not running. Run tunnel Setup to prepare it automatically.'
   fi
 }
 make_key() {
@@ -186,9 +214,9 @@ write_unit() {
 }
 receiver() {
   need_runtime
-  need_client
+  ensure_tools receiver
   find_sshd
-  command -v openssl >/dev/null || die 'openssl is not installed.'
+  ensure_sshd_service
   get_name
   get_mode
   [[ ! -f $DIR/initiator ]] || die 'This name is already used for an initiator on this server. Choose another name.'
@@ -604,7 +632,6 @@ BANNER
   menu_item 3 'Manage Tunnels' 'table, status and deletion'
   menu_item 4 'Status & Logs' 'view logs, start, stop, restart'
   menu_item 5 'Public Key' 'generate or copy your public key'
-  menu_item 6 'Prerequisites' 'install required packages'
   menu_item 0 'Exit' 'close this menu'
   printf '\n%s---------------------------------------------------------------%s\n' "$C_GRAY" "$C_RESET"
   printf '  %sGitHub: Mehdi81030/ssh-reverse-tunnel%s\n\n' "$C_GRAY" "$C_RESET"
@@ -618,7 +645,7 @@ main() {
     case $choice in
       1) run_action quick_setup reverse;; 2) run_action quick_setup direct;;
       3) run_action list_profiles;; 4) run_action manage;;
-      5) run_action make_key;; 6) run_action install_tools;; 0) exit 0;;
+      5) run_action make_key;; 0) exit 0;;
       *) say 'Invalid option';;
     esac
   done
