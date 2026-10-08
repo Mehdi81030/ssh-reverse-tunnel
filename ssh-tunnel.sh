@@ -77,8 +77,8 @@ get_host() {
 }
 get_mode() {
   if [[ -n ${QUICK_MODE:-} ]]; then MODE=$QUICK_MODE; return; fi
-  say '1) Reverse: SSH initiator = abroad; SSH receiver = Iran'
-  say '2) Direct:  SSH initiator = Iran; SSH receiver = abroad'
+  say '1) Reverse: SSH initiator = Kharej; SSH receiver = Iran'
+  say '2) Direct:  SSH initiator = Iran; SSH receiver = Kharej'
   local answer
   while :; do
     ask answer 'Mode' '1'
@@ -216,13 +216,13 @@ receiver() {
     fi
     TARGET=0.0.0.0:$LISTEN_PORT
   else
-    get_host BACKEND 'V2Ray address as seen from this abroad server' '127.0.0.1'
-    get_port V2_PORT 'V2Ray TCP port on abroad' '443'
-    get_port SSH_PORT 'SSH port of this abroad server' '22'
+    get_host BACKEND 'V2Ray address as seen from this Kharej server' '127.0.0.1'
+    get_port V2_PORT 'V2Ray TCP port on Kharej' '443'
+    get_port SSH_PORT 'SSH port of this Kharej server' '22'
     TARGET=$BACKEND:$V2_PORT
   fi
   if [[ $MODE == reverse ]]; then
-    say 'First run: 1) Setup Reverse -> 2) Abroad, on the abroad server.'
+    say 'First run: 1) Setup Reverse -> 2) Kharej, on the Kharej server.'
   else
     say 'First run: 2) Setup Direct -> 1) Iran, on the Iran server.'
   fi
@@ -323,14 +323,14 @@ initiator() {
   if [[ $MODE == reverse ]]; then
     say 'On Iran: run 1) Setup Reverse -> 1) Iran, and paste this key.'
   else
-    say 'On abroad: run 2) Setup Direct -> 2) Abroad, and paste this key.'
+    say 'On Kharej: run 2) Setup Direct -> 2) Kharej, and paste this key.'
   fi
   say 'You can keep this terminal open while preparing the other server.'
   confirm 'Is the other server ready with this public key?' || return 0
   if [[ $MODE == reverse ]]; then
     get_host REMOTE 'Iran server IPv4 address or hostname'
   else
-    get_host REMOTE 'Abroad server IPv4 address or hostname'
+    get_host REMOTE 'Kharej server IPv4 address or hostname'
   fi
   get_port SSH_PORT 'SSH port of the receiver' '22'
   get_port LISTEN_PORT 'User entry port on Iran' '8443'
@@ -340,10 +340,10 @@ initiator() {
   elif command -v ss >/dev/null && [[ -n $(ss -H -ltn "sport = :$LISTEN_PORT") ]]; then
     die 'The user entry port is already in use.'
   fi
-  get_host BACKEND 'V2Ray address as seen from the abroad server' '127.0.0.1'
+  get_host BACKEND 'V2Ray address as seen from the Kharej server' '127.0.0.1'
   warn 'Enter the VLESS inbound port, not the web panel port.'
-  get_port V2_PORT 'V2Ray TCP port on abroad' '443'
-  say "Mode: $MODE | Iran entry: $LISTEN_PORT/TCP | Abroad V2Ray: $BACKEND:$V2_PORT"
+  get_port V2_PORT 'V2Ray TCP port on Kharej' '443'
+  say "Mode: $MODE | Iran entry: $LISTEN_PORT/TCP | Kharej V2Ray: $BACKEND:$V2_PORT"
   if [[ $MODE == direct ]]; then
     say 'The V2Ray address and port must exactly match the destination allowed on the receiver.'
   fi
@@ -593,7 +593,7 @@ quick_setup() {
   QUICK_MODE=$1
   local location
   say 'Which server are you running this on?'
-  printf '  1) Iran\n  2) Abroad\n'
+  printf '  1) Iran\n  2) Kharej\n'
   while :; do
     ask location 'This server' '1'
     [[ $location == 1 || $location == 2 ]] && break
@@ -637,8 +637,8 @@ BANNER
   printf '%s\n  %s%sSSH REVERSE TUNNEL%s  %sv2%s\n' "$C_RESET" "$C_BOLD" "$C_WHITE" "$C_RESET" "$C_RED" "$C_RESET"
   printf '  %sDirect & Reverse | VLESS / Xray | TCP%s\n\n' "$C_GRAY" "$C_RESET"
   printf '%s---------------------------------------------------------------%s\n\n' "$C_GRAY" "$C_RESET"
-  menu_item 1 'Setup Reverse' 'Abroad connects to Iran'
-  menu_item 2 'Setup Direct' 'Iran connects to Abroad'
+  menu_item 1 'Setup Reverse' 'Kharej connects to Iran'
+  menu_item 2 'Setup Direct' 'Iran connects to Kharej'
   menu_item 3 'Manage Tunnels' 'table, status and deletion'
   menu_item 4 'Status & Logs' 'view logs, start, stop, restart'
   menu_item 5 'Connection Test' 'retry and finish saved setup'

@@ -16,8 +16,8 @@ sudo bash ssh-tunnel.sh
 Or clone this repository and run `sudo bash ssh-tunnel.sh`. **Colors are enabled by default; no extra flag is needed.** The interface uses red numbers and accents, bold white titles, and gray descriptions. Disable colors only when needed with `--no-color` or `NO_COLOR=1`.
 
 ```text
-  1) Setup Reverse         Abroad connects to Iran
-  2) Setup Direct          Iran connects to Abroad
+  1) Setup Reverse         Kharej connects to Iran
+  2) Setup Direct          Iran connects to Kharej
   3) Manage Tunnels        table, status and deletion
   4) Status & Logs         view logs, start, stop, restart
   5) Connection Test       retry and finish saved setup
@@ -28,7 +28,7 @@ Or clone this repository and run `sudo bash ssh-tunnel.sh`. **Colors are enabled
 
 ## Features
 
-- Guided setup: choose Reverse or Direct, then choose Iran or Abroad.
+- Guided setup: choose Reverse or Direct, then choose Iran or Kharej.
 - Dedicated SSH account limited to the requested forwarding operation, with shell sessions disabled.
 - Reuses existing Ed25519 keys and asks you to compare host key fingerprints.
 - A systemd service starts after boot and reconnects after disconnection.
@@ -47,13 +47,13 @@ Forwarding is **TCP only**. The script does not configure firewall rules, change
 
 | Mode | SSH connection starts on | SSH receiver | Client connects to |
 |---|---|---|---|
-| Reverse | Abroad | Iran | Iran IP and entry port |
-| Direct | Iran | Abroad | Iran IP and entry port |
+| Reverse | Kharej | Iran | Iran IP and entry port |
+| Direct | Iran | Kharej | Iran IP and entry port |
 
-In either mode, the backend V2Ray/Xray service runs on Abroad. These are SSH port-forwarding tunnels, not layer-3 VPNs.
+In either mode, the backend V2Ray/Xray service runs on Kharej. These are SSH port-forwarding tunnels, not layer-3 VPNs.
 
 ```text
-Client -> Iran:8443 -> SSH tunnel -> Abroad:127.0.0.1:443 -> VLESS
+Client -> Iran:8443 -> SSH tunnel -> Kharej:127.0.0.1:443 -> VLESS
 ```
 
 Use the VLESS **inbound port**, not the web panel port. The Iran entry port and the backend port may differ. The restricted account requires reverse entry ports to be **1024 or higher**.
@@ -61,20 +61,20 @@ Use the VLESS **inbound port**, not the web panel port. The Iran entry port and 
 ## Reverse setup
 
 1. Install prerequisites with option **7** on both machines if needed.
-2. On **Abroad**, choose **1: Setup Reverse**, then **2: Abroad**. Choose a tunnel name, for example `main`.
+2. On **Kharej**, choose **1: Setup Reverse**, then **2: Kharej**. Choose a tunnel name, for example `main`.
 3. Copy the entire displayed `ssh-ed25519 ...` public key line. Keep this terminal open.
 4. On **Iran**, choose **1: Setup Reverse**, then **1: Iran**. Use the same tunnel name, enter the Iran entry port and actual Iran SSH port, and paste the public key.
-5. Return to Abroad and confirm that Iran is ready. Enter the Iran address, SSH port, Iran entry port, backend address (usually `127.0.0.1`) and actual VLESS inbound port.
+5. Return to Kharej and confirm that Iran is ready. Enter the Iran address, SSH port, Iran entry port, backend address (usually `127.0.0.1`) and actual VLESS inbound port.
 6. Compare the displayed host key fingerprints with the Iran output. Confirm only if they match.
 7. After the SSH test succeeds, the service is installed. Configure the client with the Iran IP and entry port, keeping the backend VLESS UUID and protocol settings.
 
-Iran must allow its SSH port and client entry port in the host and provider firewalls. Abroad must be able to establish an SSH connection to Iran and transfer data.
+Iran must allow its SSH port and client entry port in the host and provider firewalls. Kharej must be able to establish an SSH connection to Iran and transfer data.
 
 ## Direct setup
 
-Choose **2: Setup Direct** on both servers. Iran generates the public key; Abroad registers it. Iran then starts the SSH connection to Abroad. Use the same profile name, and enter the exact same backend address and port on both sides.
+Choose **2: Setup Direct** on both servers. Iran generates the public key; Kharej registers it. Iran then starts the SSH connection to Kharej. Use the same profile name, and enter the exact same backend address and port on both sides.
 
-Abroad must allow its SSH port, and Iran must allow the client entry port. The backend must be reachable from the Abroad host; for Docker deployments, use the port published on the host.
+Kharej must allow its SSH port, and Iran must allow the client entry port. The backend must be reachable from the Kharej host; for Docker deployments, use the port published on the host.
 
 ## Menu and tunnel table
 
@@ -93,7 +93,7 @@ Option **3** shows the profile name, local role, mode, Iran entry port (when kno
 
 `Configured` means the receiver's local configuration is prepared; the actual tunnel service runs on the initiator. `active` means the local service is running. Test with a real client to confirm end-to-end service health.
 
-For multiple Abroad servers, use a different tunnel name and Iran entry port for each. Backend ports may be identical on separate servers. This does not provide automatic load balancing or failover between backends.
+For multiple Kharej servers, use a different tunnel name and Iran entry port for each. Backend ports may be identical on separate servers. This does not provide automatic load balancing or failover between backends.
 
 ## Troubleshooting
 
