@@ -131,6 +131,8 @@ For multiple Kharej servers, use a different tunnel name and Iran entry port for
 
 Setup automatically tests SSH with a 30-second timeout and prints the last 80 lines of debug output on failure. Exit code **124** means the test reached its time limit; it does not identify the cause by itself. Failure of this initial test no longer blocks service installation. Once the receiver has the correct public key and forwarding settings, the service connects automatically. Incorrect settings or a blocked network path still need correction; use Recent Logs. Initiator profiles left `Incomplete` by an older version require one Setup run with the same name to install their service. Host key verification remains required before installation.
 
+If the initiator was recreated and the receiver still has its old key, SSH reports `Permission denied (publickey)`. Copy the current public key from **4: Public Key** on the initiator. On the receiver, run Setup again with the same mode and tunnel name, then paste it at **Paste new ssh-ed25519 public key (Enter to keep current)**. Enter without text keeps the existing key. A replacement is validated and written atomically, with the previous authorized key backed up in the profile directory. The existing forwarding permission is retained. No account recreation or SSH restart is needed; the initiator reconnects automatically.
+
 **Manage Tunnels -> select a service -> 5: View Recent Logs** shows setup logs even if no tunnel service was created. On the receiver it shows SSH service logs. Use **7: View Configuration** for account permissions. If `AllowUsers`, `AllowGroups`, `DisableForwarding` or other SSH restrictions are configured, ensure the dedicated tunnel account is permitted. Entering an SSH port in this script does not change sshd's listening port.
 
 For profile `main`:
@@ -173,13 +175,14 @@ bash tests/dependencies.sh
 bash tests/table.sh
 bash tests/service-menu.sh
 bash tests/setup-order.sh
+bash tests/receiver-key.sh
 sudo bash tests/integration.sh
 sudo bash tests/systemd-order.sh
 ```
 
-The input tests check UTF-8 corrections and numeric answers, including real terminal editing with the kernel's UTF-8 erase setting disabled. The dependency and service-menu tests mock package managers/systemctl, checking automatic installation, service selection, controls, editing rollback, auto-restart management and deletion without touching shared sshd or exposing private keys. The setup-order test checks that a failed initial SSH test installs a retrying service, and that canceled host verification still prevents installation.
+The input tests check UTF-8 corrections and numeric answers, including real terminal editing with the kernel's UTF-8 erase setting disabled. The dependency and service-menu tests mock package managers/systemctl, checking automatic installation, service selection, controls, editing rollback, auto-restart management and deletion without touching shared sshd or exposing private keys. The setup-order test checks that a failed initial SSH test installs a retrying service, and that canceled host verification still prevents installation. The receiver-key test checks replacement, backups, unchanged forwarding permissions, rejection of invalid keys, and keeping the existing key with Enter.
 
-The integration tests need OpenSSH, Python 3, curl, iproute and systemd tools. `integration.sh` creates a temporary localhost SSH daemon and tests real HTTP forwarding in both directions, rejection of shell sessions, timeout logging and menu recovery; ports `32222` through `32226` must be free. `systemd-order.sh` additionally needs running systemd and free ports `32322` through `32325`. It installs temporary, uniquely named services, verifies real forwarding when either side finishes last, and cleans up its own units and boot links. These tests do not modify production sshd configuration or accounts. VPS connectivity and production capacity are not covered by these local tests.
+The integration tests need OpenSSH, Python 3, curl, iproute and systemd tools. `integration.sh` creates a temporary localhost SSH daemon and tests real HTTP forwarding in both directions, rejection of shell sessions, timeout logging and menu recovery; ports `32222` through `32226` must be free. `systemd-order.sh` additionally needs running systemd and free ports `32322` through `32325`. It installs temporary, uniquely named services, verifies real forwarding when either side finishes last (including reconnecting after replacing a stale receiver key), and cleans up its own units and boot links. These tests do not modify production sshd configuration or accounts. VPS connectivity and production capacity are not covered by these local tests.
 
 ## License
 

@@ -26,6 +26,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'journalctl -u "$UNIT" -n 25 --no-pager >&2; echo "FAIL line $LINENO" >&2' ERR
 ssh-keygen -q -t ed25519 -N '' -f "$scratch/host"
+ssh-keygen -q -t ed25519 -N '' -f "$scratch/old-key"
 printf 'order-independent-forwarding\n' > "$scratch/probe.txt"
 python3 -m http.server 32323 --bind 127.0.0.1 --directory "$scratch" > "$scratch/backend.log" 2>&1 &
 backend_pid=$!
@@ -47,14 +48,19 @@ for MODE in reverse direct; do
   ssh-keygen -q -t ed25519 -N '' -f "$DIR/id_ed25519"
   printf '[127.0.0.1]:%s %s\n' "$SSH_PORT" "$(cat "$scratch/host.pub")" > "$DIR/known_hosts"
   write_receiver_snippet
-  : > "$scratch/authorized_keys"
+  receiver_home=$scratch/receiver-$MODE
+  mkdir -p "$receiver_home/.ssh"
+  PUBLIC_KEY=$(cat "$scratch/old-key.pub")
+  write_authorized_key "$receiver_home/.ssh/authorized_keys"
+  chmod 700 "$receiver_home" "$receiver_home/.ssh"
+  chmod 600 "$receiver_home/.ssh/authorized_keys"
   cat > "$scratch/sshd_config" <<EOF
 Include $SNIPPET
 Port $SSH_PORT
 ListenAddress 127.0.0.1
 HostKey $scratch/host
 PidFile $scratch/sshd.pid
-AuthorizedKeysFile $scratch/authorized_keys
+AuthorizedKeysFile $receiver_home/.ssh/authorized_keys
 StrictModes yes
 PermitRootLogin prohibit-password
 UsePAM no
@@ -65,20 +71,21 @@ EOF
   sshd_pid=$!
   sleep 0.5
   build_ssh_args
-  # The receiver exists, but has not registered the tunnel's public key yet.
+  # The receiver has a stale key from an earlier setup.
   install_tunnel_service > "$scratch/setup-$MODE.txt"
   grep -q 'first SSH test failed' "$scratch/setup-$MODE.txt"
   profile_info "$NAME"
   [[ $P_STATE == Waiting && $P_AUTO == Yes && $P_BOOT == Yes ]]
-  # Finish the receiver LAST. Do not restart or reconfigure the initiator.
-  if [[ $MODE == reverse ]]; then permission=permitlisten; else permission=permitopen; fi
-  printf 'restrict,port-forwarding,%s="%s" %s\n' "$permission" "$TARGET" "$(cat "$DIR/id_ed25519.pub")" > "$scratch/authorized_keys"
-  chmod 600 "$scratch/authorized_keys"
+  # Finish the receiver LAST by replacing its key with the real update helper.
+  # Do not restart or reconfigure the initiator or receiver SSH daemon.
+  ACCOUNT=root
+  PUBLIC_KEY=$(cat "$DIR/id_ed25519.pub")
+  update_receiver_key "$receiver_home" > "$scratch/key-update-$MODE.txt"
   wait_connected
   profile_info "$NAME"
   [[ $P_STATE == active ]]
   [[ $(curl --fail --silent --retry 5 --retry-connrefused --max-time 5 "http://127.0.0.1:$LISTEN_PORT/probe.txt") == order-independent-forwarding ]]
-  echo "PASS $MODE initiator-first: real systemd connected after key registration; HTTP forwarded"
+  echo "PASS $MODE initiator-first: real systemd connected after stale-key replacement; HTTP forwarded"
   # Finish the initiator LAST with the receiver already prepared.
   systemctl stop "$UNIT"
   ACCOUNT=root

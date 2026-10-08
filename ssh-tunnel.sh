@@ -272,6 +272,58 @@ write_unit() {
     printf 'NoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=yes\n\n[Install]\nWantedBy=multi-user.target\n'
   } > "$output"
 }
+validate_public_key() {
+  [[ $PUBLIC_KEY =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+(\ .*)?$ ]] || die 'Enter a valid Ed25519 public key.'
+  mkdir -p "$DIR"
+  printf '%s\n' "$PUBLIC_KEY" > "$DIR/public-key.check"
+  if ! ssh-keygen -l -f "$DIR/public-key.check"; then
+    rm -f "$DIR/public-key.check"
+    die 'The public key is invalid.'
+  fi
+  rm -f "$DIR/public-key.check"
+}
+write_authorized_key() {
+  local permission
+  if [[ $MODE == reverse ]]; then permission=permitlisten; else permission=permitopen; fi
+  printf 'restrict,port-forwarding,%s="%s" %s\n' "$permission" "$TARGET" "$PUBLIC_KEY" > "$1"
+}
+update_receiver_key() {
+  local home_dir=$1 field value rest destination='' port key_file temporary
+  validate_public_key
+  id "$ACCOUNT" >/dev/null 2>&1 || die 'The tunnel account is missing.'
+  [[ -f $SNIPPET ]] || die 'The receiver forwarding configuration is missing.'
+  # Read the existing permission; replacing a key must not widen forwarding.
+  while read -r field value rest; do
+    if [[ ( $MODE == reverse && $field == PermitListen ) || ( $MODE == direct && $field == PermitOpen ) ]]; then
+      [[ -z $destination && -z $rest ]] || die 'The receiver forwarding permission is ambiguous.'
+      destination=$value
+    fi
+  done < "$SNIPPET"
+  if [[ $MODE == reverse ]]; then
+    [[ $destination =~ ^0\.0\.0\.0:([0-9]{1,5})$ ]] || die 'Invalid receiver entry port permission.'
+    port=${BASH_REMATCH[1]}
+    (( 10#$port >= 1024 && 10#$port <= 65535 )) || die 'Invalid receiver entry port permission.'
+  else
+    [[ $destination =~ ^127\.0\.0\.1:([0-9]{1,5})$ ]] || die 'Invalid receiver config port permission.'
+    port=${BASH_REMATCH[1]}
+    (( 10#$port >= 1 && 10#$port <= 65535 )) || die 'Invalid receiver config port permission.'
+  fi
+  [[ -d $home_dir && ! -L $home_dir && ! -L $home_dir/.ssh ]] || die 'Invalid receiver home directory.'
+  key_file=$home_dir/.ssh/authorized_keys
+  [[ ! -L $key_file ]] || die 'The authorized key file must not be a symbolic link.'
+  mkdir -p "$home_dir/.ssh"
+  if [[ -f $key_file ]]; then cp -p "$key_file" "$DIR/authorized_keys.before-update"; fi
+  TARGET=$destination
+  temporary=$(mktemp "$home_dir/.ssh/authorized_keys.XXXXXX")
+  write_authorized_key "$temporary"
+  chmod 600 "$temporary"
+  chown "$ACCOUNT:$(id -gn "$ACCOUNT")" "$temporary"
+  chmod 700 "$home_dir" "$home_dir/.ssh"
+  chown "$ACCOUNT:$(id -gn "$ACCOUNT")" "$home_dir" "$home_dir/.ssh"
+  mv -f -- "$temporary" "$key_file"
+  if command -v restorecon >/dev/null; then restorecon "$key_file"; fi
+  ok 'Public key updated. The other server will reconnect automatically.'
+}
 receiver() {
   need_runtime
   ensure_tools receiver
@@ -286,8 +338,10 @@ receiver() {
     [[ ! -f $SNIPPET ]] || cat "$SNIPPET"
     if [[ -f /home/$ACCOUNT/.ssh/authorized_keys ]]; then
       say 'Fingerprint of the public key currently authorized here:'
-      ssh-keygen -lf "/home/$ACCOUNT/.ssh/authorized_keys"
+      ssh-keygen -lf "/home/$ACCOUNT/.ssh/authorized_keys" || warn 'The stored public key could not be read.'
     fi
+    ask PUBLIC_KEY 'Paste new ssh-ed25519 public key (Enter to keep current)'
+    if [[ -n $PUBLIC_KEY ]]; then update_receiver_key "/home/$ACCOUNT"; fi
     show_host_fingerprints
     say 'Complete the other server if needed. An installed tunnel service reconnects automatically.'
     return 0
@@ -315,14 +369,8 @@ receiver() {
     say 'First run: 2) Setup Direct -> 1) Iran, on the Iran server.'
   fi
   ask PUBLIC_KEY 'Paste the complete ssh-ed25519 public key line'
-  [[ $PUBLIC_KEY =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+(\ .*)?$ ]] || die 'Enter a valid Ed25519 public key.'
-  mkdir -p "$DIR" "$DROP"
-  printf '%s\n' "$PUBLIC_KEY" > "$DIR/public-key.check"
-  if ! ssh-keygen -l -f "$DIR/public-key.check"; then
-    rm -f "$DIR/public-key.check"
-    die 'The public key is invalid.'
-  fi
-  rm -f "$DIR/public-key.check"
+  validate_public_key
+  mkdir -p "$DROP"
   confirm 'Create Tunnel?' || return 0
 
   # Keep the account usable for pubkey auth, but give it an unknown random password.
@@ -337,11 +385,7 @@ receiver() {
   unset password_hash
   printf '%s\n' "$MODE" > "$DIR/receiver"
   mkdir -p "$home_dir/.ssh"
-  if [[ $MODE == reverse ]]; then
-    printf 'restrict,port-forwarding,permitlisten="%s" %s\n' "$TARGET" "$PUBLIC_KEY" > "$home_dir/.ssh/authorized_keys"
-  else
-    printf 'restrict,port-forwarding,permitopen="%s" %s\n' "$TARGET" "$PUBLIC_KEY" > "$home_dir/.ssh/authorized_keys"
-  fi
+  write_authorized_key "$home_dir/.ssh/authorized_keys"
   chmod 700 "$home_dir" "$home_dir/.ssh"
   chmod 600 "$home_dir/.ssh/authorized_keys"
   chown -R "$ACCOUNT:$(id -gn "$ACCOUNT")" "$home_dir"
