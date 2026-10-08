@@ -314,7 +314,6 @@ receiver() {
   else
     say 'First run: 2) Setup Direct -> 1) Iran, on the Iran server.'
   fi
-  say 'It displays a public key. Copy that entire line here.'
   ask PUBLIC_KEY 'Paste the complete ssh-ed25519 public key line'
   [[ $PUBLIC_KEY =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+(\ .*)?$ ]] || die 'Enter a valid Ed25519 public key.'
   mkdir -p "$DIR" "$DROP"
