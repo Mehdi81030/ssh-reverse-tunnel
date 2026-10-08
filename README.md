@@ -63,7 +63,7 @@ In either mode, the backend V2Ray/Xray service runs on Kharej. These are SSH por
 Client -> Iran:8443 -> SSH tunnel -> Kharej:127.0.0.1:443 -> VLESS
 ```
 
-Use the VLESS **inbound port**, not the web panel port. The Iran entry port and the backend port may differ. The restricted account requires reverse entry ports to be **1024 or higher**.
+At **Config port on kharej**, enter the VLESS inbound port, not the web panel port. The backend address is fixed to `127.0.0.1` on Kharej, so there is no backend-address question. The service must listen there or have its container port published on the host. The Iran entry port and the config port may differ. The restricted account requires reverse entry ports to be **1024 or higher**.
 
 ## Reverse setup
 
@@ -71,7 +71,7 @@ Use the VLESS **inbound port**, not the web panel port. The Iran entry port and 
 2. On **Kharej**, choose **1: Setup Reverse**, then **2: Kharej**. Choose a tunnel name, for example `main`.
 3. Copy the entire displayed `ssh-ed25519 ...` public key line. Keep this terminal open.
 4. On **Iran**, choose **1: Setup Reverse**, then **1: Iran**. Use the same tunnel name, enter the Iran entry port and actual Iran SSH port, and paste the public key.
-5. Return to Kharej and confirm that Iran is ready. Enter the Iran address, SSH port, Iran entry port, backend address (usually `127.0.0.1`) and actual VLESS inbound port.
+5. Return to Kharej and confirm that Iran is ready. Enter the Iran address, SSH port, Iran entry port and **Config port on kharej**. The backend address is filled automatically as `127.0.0.1`.
 6. Compare the displayed host key fingerprints with the Iran output. Confirm only if they match.
 7. After the SSH test succeeds, the service is installed. Configure the client with the Iran IP and entry port, keeping the backend VLESS UUID and protocol settings.
 
@@ -79,7 +79,7 @@ Iran must allow its SSH port and client entry port in the host and provider fire
 
 ## Direct setup
 
-Choose **2: Setup Direct** on both servers. Iran generates the public key; Kharej registers it. Iran then starts the SSH connection to Kharej. Use the same profile name, and enter the exact same backend address and port on both sides.
+Choose **2: Setup Direct** on both servers. Iran generates the public key; Kharej registers it. Iran then starts the SSH connection to Kharej. Use the same profile name and config port on both sides. The backend address is automatically set to `127.0.0.1` on Kharej.
 
 Kharej must allow its SSH port, and Iran must allow the client entry port. The backend must be reachable from the Kharej host; for Docker deployments, use the port published on the host.
 

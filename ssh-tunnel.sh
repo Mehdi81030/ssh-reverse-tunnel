@@ -39,7 +39,7 @@ confirm() {
 }
 get_name() {
   while :; do
-    ask NAME 'Tunnel name (lowercase letters, digits, hyphens)' 'main'
+    ask NAME 'Tunnel name' 'main'
     [[ $NAME =~ ^[a-z][a-z0-9-]{0,19}$ ]] && break
     say 'Use up to 20 characters, starting with a lowercase letter.'
   done
@@ -244,8 +244,8 @@ receiver() {
     fi
     TARGET=0.0.0.0:$LISTEN_PORT
   else
-    get_host BACKEND 'V2Ray address as seen from this Kharej server' '127.0.0.1'
-    get_port V2_PORT 'V2Ray TCP port on Kharej' '443'
+    BACKEND=127.0.0.1
+    get_port V2_PORT 'Config port on kharej' '443'
     get_port SSH_PORT 'SSH port of this Kharej server' '22'
     TARGET=$BACKEND:$V2_PORT
   fi
@@ -369,12 +369,12 @@ initiator() {
   elif command -v ss >/dev/null && [[ -n $(ss -H -ltn "sport = :$LISTEN_PORT") ]]; then
     die 'The user entry port is already in use.'
   fi
-  get_host BACKEND 'V2Ray address as seen from the Kharej server' '127.0.0.1'
-  warn 'Enter the VLESS inbound port, not the web panel port.'
-  get_port V2_PORT 'V2Ray TCP port on Kharej' '443'
+  BACKEND=127.0.0.1
+  warn 'Enter your config port, not the panel port.'
+  get_port V2_PORT 'Config port on kharej' '443'
   say "Mode: $MODE | Iran entry: $LISTEN_PORT/TCP | Kharej V2Ray: $BACKEND:$V2_PORT"
   if [[ $MODE == direct ]]; then
-    say 'The V2Ray address and port must exactly match the destination allowed on the receiver.'
+    say 'The config port must match the port allowed on the Kharej server.'
   fi
   trust_host || return 0
   build_ssh_args
@@ -659,8 +659,8 @@ edit_service_config() {
   get_host REMOTE 'SSH peer IPv4 address or hostname' "$P_REMOTE"
   get_port SSH_PORT 'SSH port' "$P_SSH"
   get_port LISTEN_PORT 'Iran entry port' "$P_ENTRY"
-  get_host BACKEND 'V2Ray address on Kharej' "${P_BACKEND%:*}"
-  get_port V2_PORT 'V2Ray TCP port on Kharej' "${P_BACKEND##*:}"
+  BACKEND=127.0.0.1
+  get_port V2_PORT 'Config port on kharej' "${P_BACKEND##*:}"
   if [[ $MODE == reverse ]]; then
     (( LISTEN_PORT >= 1024 )) || die 'The reverse entry port must be 1024 or higher.'
     [[ $LISTEN_PORT != "$SSH_PORT" ]] || die 'Iran entry port must differ from the Iran SSH port.'

@@ -76,7 +76,7 @@ profile_info main
 [[ $P_AUTO == Yes ]]
 echo 'PASS auto restart: policy toggles; configuration view does not reveal private key contents'
 
-edit_service_config <<< $'\n\n8444\n\n8445\ny'
+edit_service_config <<< $'\n\n8444\n8445\ny'
 grep -q '^IranPort=8444$' "$DIR/summary"
 grep -q '^Backend=127.0.0.1:8445$' "$DIR/summary"
 grep -q '0.0.0.0:8444:127.0.0.1:8445' "$UNIT_DIR/$UNIT"
@@ -84,7 +84,7 @@ cp "$DIR/summary" "$scratch/expected-summary"
 cp "$UNIT_DIR/$UNIT" "$scratch/expected-unit"
 profile_info main
 FAIL_RESTART=1
-if (edit_service_config <<< $'\n\n8450\n\n8446\ny') > "$scratch/rollback.txt" 2>&1; then
+if (edit_service_config <<< $'\n\n8450\n8446\ny') > "$scratch/rollback.txt" 2>&1; then
   echo 'ERROR: simulated restart failure was not handled'; exit 1
 fi
 cmp "$DIR/summary" "$scratch/expected-summary"
