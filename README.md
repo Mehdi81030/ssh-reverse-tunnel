@@ -1,6 +1,6 @@
 # SSH Reverse Tunnel
 
-A colorful Bash menu for managing **reverse and direct SSH port-forwarding tunnels** between two Linux servers. Supports V2Ray/Xray TCP inbounds and other TCP services.
+A Bash manager for **reverse and direct SSH port-forwarding tunnels** between two Linux servers, with an automatically colored menu inspired by [BackPack](https://github.com/AminMGMT/BackPack). Supports V2Ray/Xray TCP inbounds and other TCP services.
 
 [راهنمای فارسی](README-fa.md)
 
@@ -13,7 +13,18 @@ curl -fL --retry 3 -o ssh-tunnel.sh https://raw.githubusercontent.com/Mehdi81030
 sudo bash ssh-tunnel.sh
 ```
 
-Or clone this repository and run `sudo bash ssh-tunnel.sh`. Force terminal colors with `--color`; disable them with `--no-color` or `NO_COLOR=1`.
+Or clone this repository and run `sudo bash ssh-tunnel.sh`. **Colors are enabled by default; no extra flag is needed.** The interface uses red numbers and accents, bold white titles, and gray descriptions. Disable colors only when needed with `--no-color` or `NO_COLOR=1`.
+
+```text
+  1) Setup Reverse         Abroad connects to Iran
+  2) Setup Direct          Iran connects to Abroad
+  3) Manage Tunnels        table, status and deletion
+  4) Status & Logs         view logs, start, stop, restart
+  5) Connection Test       retry and finish saved setup
+  6) Public Key            generate or copy your public key
+  7) Prerequisites         install required packages
+  0) Exit                  close this menu
+```
 
 ## Features
 
@@ -71,11 +82,11 @@ Abroad must allow its SSH port, and Iran must allow the client entry port. The b
 |---|---|
 | 1 | Set up Reverse |
 | 2 | Set up Direct |
-| 3 | Tunnel table / Delete |
-| 4 | Status / Logs / Start / Stop |
-| 5 | Retry SSH test / finish setup |
-| 6 | Show public key |
-| 7 | Install prerequisites |
+| 3 | Manage Tunnels: table and deletion |
+| 4 | Status & Logs: start, stop and restart |
+| 5 | Connection Test: retry / finish setup |
+| 6 | Public Key |
+| 7 | Prerequisites |
 | 0 | Exit |
 
 Option **3** shows the profile name, local role, mode, Iran entry port (when known), and local status. Enter a row number to delete that profile and confirm its name. The table refreshes after deletion; enter `r` to refresh or `0` to return. Deletion affects this server only. Remove the matching profile on the other server separately.

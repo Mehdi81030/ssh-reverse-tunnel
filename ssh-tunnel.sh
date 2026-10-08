@@ -5,33 +5,35 @@ export LC_ALL=C
 umask 077
 BASE=/etc/ssh-v2ray-tunnel
 DROP=/etc/ssh/sshd_config.d
-[[ ${1:-} == --help ]] && { printf 'Usage: sudo bash %s [--color|--no-color]\nLinux + systemd; TCP forwarding only. See README-fa.md.\n' "$0"; exit 0; }
-C_RESET='' C_CYAN='' C_GREEN='' C_RED='' C_YELLOW='' C_BOLD=''
-if [[ ${1:-} == --color ]] || { [[ -t 1 && ${TERM:-dumb} != dumb && -z ${NO_COLOR:-} && ${1:-} != --no-color ]]; }; then
-  C_RESET=$'\033[0m' C_CYAN=$'\033[36m' C_GREEN=$'\033[32m'
-  C_RED=$'\033[31m' C_YELLOW=$'\033[33m' C_BOLD=$'\033[1m'
+[[ ${1:-} == --help ]] && { printf 'Usage: sudo bash %s [--no-color]\nColors are enabled by default. Linux + systemd; TCP forwarding only.\nSee README-fa.md.\n' "$0"; exit 0; }
+C_RESET='' C_CYAN='' C_GREEN='' C_RED='' C_YELLOW='' C_BOLD='' C_WHITE='' C_GRAY=''
+if [[ -z ${NO_COLOR:-} && ${1:-} != --no-color ]]; then
+  C_RESET=$'\033[0m' C_RED=$'\033[31m' C_WHITE=$'\033[37m'
+  C_GRAY=$'\033[90m' C_BOLD=$'\033[1m'
+  # Existing status and table helpers use the same red / white / gray palette.
+  C_CYAN=$C_RED C_GREEN=$C_WHITE C_YELLOW=$C_GRAY
 fi
 trap 'printf "\n%s[ERROR]%s Command failed at line %s. See the message above.\n" "$C_RED" "$C_RESET" "$LINENO" >&2' ERR
 
-say() { printf '\n%s%s%s\n' "$C_CYAN" "$*" "$C_RESET"; }
-ok() { printf '\n%s[OK] %s%s\n' "$C_GREEN" "$*" "$C_RESET"; }
+say() { printf '\n%s%s%s%s\n' "$C_BOLD" "$C_WHITE" "$*" "$C_RESET"; }
+ok() { printf '\n%s%s[OK] %s%s\n' "$C_BOLD" "$C_WHITE" "$*" "$C_RESET"; }
 warn() { printf '\n%s[NOTE] %s%s\n' "$C_YELLOW" "$*" "$C_RESET"; }
 die() { printf '\n%s[ERROR] %s%s\n' "$C_RED" "$*" "$C_RESET" >&2; exit 1; }
 ask() {
   local ask_label=$2 ask_default=${3:-} ask_input
   if [[ -n $ask_default ]]; then
-    printf '%s%s [%s]: %s' "$C_YELLOW" "$ask_label" "$ask_default" "$C_RESET"
+    printf '%s > %s%s%s [%s]%s: ' "$C_RED" "$C_WHITE" "$ask_label" "$C_GRAY" "$ask_default" "$C_RESET"
     read -r ask_input || exit 1
     ask_input=${ask_input:-$ask_default}
   else
-    printf '%s%s: %s' "$C_YELLOW" "$ask_label" "$C_RESET"
+    printf '%s > %s%s%s: ' "$C_RED" "$C_WHITE" "$ask_label" "$C_RESET"
     read -r ask_input || exit 1
   fi
   printf -v "$1" '%s' "$ask_input"
 }
 confirm() {
   local answer
-  printf '%s%s (y/n): %s' "$C_YELLOW" "$1" "$C_RESET"
+  printf '%s > %s%s%s (y/n)%s: ' "$C_RED" "$C_WHITE" "$1" "$C_GRAY" "$C_RESET"
   read -r answer || return 1
   [[ ${answer,,} == yes || ${answer,,} == y ]]
 }
@@ -618,14 +620,39 @@ run_action() {
   printf '\n%sPress Enter to return to the menu...%s' "$C_YELLOW" "$C_RESET"
   read -r pause_answer || exit 0
 }
+menu_item() {
+  printf '  %s%2s)%s %s%s%-21s%s %s%s%s\n' \
+    "$C_RED" "$1" "$C_RESET" "$C_BOLD" "$C_WHITE" "$2" "$C_RESET" "$C_GRAY" "${3:-}" "$C_RESET"
+}
+render_menu() {
+  if [[ -t 0 && -t 1 && ${TERM:-dumb} != dumb ]]; then printf '\033[H\033[2J'; fi
+  printf '\n%s%s' "$C_BOLD" "$C_RED"
+  cat <<'BANNER'
+   ____  ____  _   _
+  / ___|/ ___|| | | |
+  \___ \\___ \| |_| |
+   ___) |___) |  _  |
+  |____/|____/|_| |_|
+BANNER
+  printf '%s\n  %s%sSSH REVERSE TUNNEL%s  %sv2%s\n' "$C_RESET" "$C_BOLD" "$C_WHITE" "$C_RESET" "$C_RED" "$C_RESET"
+  printf '  %sDirect & Reverse | VLESS / Xray | TCP%s\n\n' "$C_GRAY" "$C_RESET"
+  printf '%s---------------------------------------------------------------%s\n\n' "$C_GRAY" "$C_RESET"
+  menu_item 1 'Setup Reverse' 'Abroad connects to Iran'
+  menu_item 2 'Setup Direct' 'Iran connects to Abroad'
+  menu_item 3 'Manage Tunnels' 'table, status and deletion'
+  menu_item 4 'Status & Logs' 'view logs, start, stop, restart'
+  menu_item 5 'Connection Test' 'retry and finish saved setup'
+  menu_item 6 'Public Key' 'generate or copy your public key'
+  menu_item 7 'Prerequisites' 'install required packages'
+  menu_item 0 'Exit' 'close this menu'
+  printf '\n%s---------------------------------------------------------------%s\n' "$C_GRAY" "$C_RESET"
+  printf '  %sGitHub: Mehdi81030/ssh-reverse-tunnel%s\n\n' "$C_GRAY" "$C_RESET"
+}
 main() {
   need_runtime
   local choice
   while :; do
-    printf '\n%s%s+--------------------------------------+\n|          SSH TUNNEL  v2               |\n+--------------------------------------+%s\n' "$C_BOLD" "$C_CYAN" "$C_RESET"
-    printf '%s  1) Setup Reverse  (Abroad -> Iran)\n  2) Setup Direct   (Iran -> Abroad)%s\n' "$C_GREEN" "$C_RESET"
-    printf '%s  3) Tunnel table / Delete\n  4) Status / Logs / Start / Stop\n  5) Retry SSH test / finish setup%s\n' "$C_CYAN" "$C_RESET"
-    printf '%s  6) Show public key\n  7) Install prerequisites\n  0) Exit%s\n' "$C_YELLOW" "$C_RESET"
+    render_menu
     ask choice 'Select' '0'
     case $choice in
       1) run_action quick_setup reverse;; 2) run_action quick_setup direct;;
