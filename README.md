@@ -32,6 +32,7 @@ Prompts support UTF-8 editing with Backspace, Delete and arrow keys. If you eras
 - Dedicated SSH account limited to the requested forwarding operation, with shell sessions disabled.
 - Reuses existing Ed25519 keys and asks you to compare host key fingerprints.
 - A systemd service starts after boot and reconnects after disconnection.
+- Either server can finish setup last; an unprepared receiver does not block service installation.
 - Multiple independent tunnels, each with its own profile name and Iran entry port.
 - A service table opens a details/actions page for the selected tunnel.
 - Start, stop, restart, view status/logs/configuration, edit settings, manage auto-restart and delete a selected service.
@@ -71,17 +72,23 @@ At **Config port on kharej**, enter the VLESS inbound port, not the web panel po
 
 1. Run the script on both machines. Required tools are prepared automatically when you start setup.
 2. On **Kharej**, choose **1: Setup Reverse**, then **2: Kharej**. Choose a tunnel name, for example `main`.
-3. Copy the entire displayed `ssh-ed25519 ...` public key line. Keep this terminal open.
+3. Copy the entire displayed `ssh-ed25519 ...` public key line.
 4. On **Iran**, choose **1: Setup Reverse**, then **1: Iran**. Use the same tunnel name, enter the Iran entry port and actual Iran SSH port, and paste the public key.
-5. Return to Kharej and confirm that Iran is ready. Enter the Iran address, SSH port, Iran entry port and **Config port on kharej**. The backend address is filled automatically as `127.0.0.1`.
+5. On Kharej, enter the Iran address, SSH port, Iran entry port and **Config port on kharej**. The backend address is filled automatically as `127.0.0.1`.
 6. Compare the displayed host key fingerprints with the Iran output. Confirm only if they match.
-7. After the SSH test succeeds, the service is installed. Configure the client with the Iran IP and entry port, keeping the backend VLESS UUID and protocol settings.
+7. The service is installed even if its first SSH test fails. It retries automatically. Configure the client with the Iran IP and entry port, keeping the backend VLESS UUID and protocol settings.
+
+This is a suggested order. You can finish Kharej before step 4; it will connect automatically after Iran registers the key. You do not need to keep the setup terminal open. Iran's ordinary SSH service must be reachable for the initial host identity check. If its tunnel setup has not run yet, obtain its fingerprints directly on Iran:
+
+```bash
+for key in /etc/ssh/ssh_host_*_key.pub; do ssh-keygen -lf "$key"; done
+```
 
 Iran must allow its SSH port and client entry port in the host and provider firewalls. Kharej must be able to establish an SSH connection to Iran and transfer data.
 
 ## Direct setup
 
-Choose **2: Setup Direct** on both servers. Iran generates the public key; Kharej registers it. Iran then starts the SSH connection to Kharej. Use the same profile name and config port on both sides. The backend address is automatically set to `127.0.0.1` on Kharej.
+Choose **2: Setup Direct** on both servers. Iran generates the public key; Kharej registers it. You can finish Iran before or after registering the key on Kharej. Iran's installed service retries until the receiver is ready. Use the same profile name and config port on both sides. The backend address is automatically set to `127.0.0.1` on Kharej. Kharej's ordinary SSH service must be reachable for the initial host identity check; its fingerprints can be obtained with the command above.
 
 Kharej must allow its SSH port, and Iran must allow the client entry port. The backend must be reachable from the Kharej host; for Docker deployments, use the port published on the host.
 
@@ -110,7 +117,7 @@ The details box shows the Iran entry port, SSH peer/port, V2Ray endpoint, auto-r
 | 9 | Delete Service after confirming its name |
 | 0 | Back to the table |
 
-Start/Stop/Restart, Edit and Auto-Restart controls appear on the server running the dedicated tunnel service. On an SSH receiver, status, logs, configuration and deletion are available; shared sshd is not stopped or restarted from this page. `configured` means receiver settings are prepared; `active` means the local tunnel process is running. Test with a real client to confirm end-to-end health. `Auto Restart: Remote` means its policy is managed on the other server.
+Start/Stop/Restart, Edit and Auto-Restart controls appear on the server running the dedicated tunnel service. On an SSH receiver, status, logs, configuration and deletion are available; shared sshd is not stopped or restarted from this page. `configured` means receiver settings are prepared. New services show `Waiting` while trying to establish SSH and `active` once their SSH control connection is available. Older services without a control socket still report process status. Test with a real client to confirm backend health. `Auto Restart: Remote` means its policy is managed on the other server.
 
 Editing validates the entered addresses and ports, verifies the host fingerprint when the SSH peer changes, and preserves the prior configuration if applying the service change fails. When changing the entry port or backend, update the matching receiver permissions separately. Changes that start successfully can still fail to connect; inspect Recent Logs and test the client.
 
@@ -122,7 +129,7 @@ For multiple Kharej servers, use a different tunnel name and Iran entry port for
 
 ## Troubleshooting
 
-Setup automatically tests SSH with a 30-second timeout and prints the last 80 lines of debug output on failure. Exit code **124** means the test reached its time limit; it does not identify the cause by itself. Settings are saved for the tunnel table and diagnostics. If setup failed before creating a service, run Setup Reverse or Setup Direct again with the same profile name to retry.
+Setup automatically tests SSH with a 30-second timeout and prints the last 80 lines of debug output on failure. Exit code **124** means the test reached its time limit; it does not identify the cause by itself. Failure of this initial test no longer blocks service installation. Once the receiver has the correct public key and forwarding settings, the service connects automatically. Incorrect settings or a blocked network path still need correction; use Recent Logs. Initiator profiles left `Incomplete` by an older version require one Setup run with the same name to install their service. Host key verification remains required before installation.
 
 **Manage Tunnels -> select a service -> 5: View Recent Logs** shows setup logs even if no tunnel service was created. On the receiver it shows SSH service logs. Use **7: View Configuration** for account permissions. If `AllowUsers`, `AllowGroups`, `DisableForwarding` or other SSH restrictions are configured, ensure the dedicated tunnel account is permitted. Entering an SSH port in this script does not change sshd's listening port.
 
@@ -142,6 +149,7 @@ The script requires a working ordinary SSH/TCP path. It does not guarantee a fix
 - Receiver account: `svt-NAME`, home directory `/home/svt-NAME`.
 - Receiver SSH settings: `/etc/ssh/sshd_config.d/00-ssh-v2ray-NAME.conf`.
 - Initiator service: `ssh-v2ray-NAME.service`.
+- New services use a root-only SSH control socket under `/run/ssh-v2ray-NAME/` to check connection status. systemd creates and cleans up this directory.
 - The main SSH configuration is backed up before adding its drop-in Include. `sshd -t` validates changes before reload; failed validation restores the main configuration.
 - Keepalives run every 15 seconds; after three missed responses, SSH exits. systemd waits five seconds before reconnecting.
 - Existing client connections are lost if the SSH session disconnects.
@@ -164,10 +172,14 @@ python3 tests/input.py
 bash tests/dependencies.sh
 bash tests/table.sh
 bash tests/service-menu.sh
+bash tests/setup-order.sh
 sudo bash tests/integration.sh
+sudo bash tests/systemd-order.sh
 ```
 
-The input tests check UTF-8 corrections and numeric answers, including real terminal editing with the kernel's UTF-8 erase setting disabled. The dependency and service-menu tests mock package managers/systemctl, checking automatic installation, service selection, controls, editing rollback, auto-restart management and deletion without touching shared sshd or exposing private keys. The integration test needs OpenSSH, Python 3, curl, iproute and systemd tools. It creates a temporary localhost SSH daemon and tests real HTTP forwarding in both directions, rejection of shell sessions, timeout logging and menu recovery. Ports `32222` through `32226` must be free. It does not modify the host's production sshd configuration or accounts. VPS connectivity and production capacity are not covered by these local tests.
+The input tests check UTF-8 corrections and numeric answers, including real terminal editing with the kernel's UTF-8 erase setting disabled. The dependency and service-menu tests mock package managers/systemctl, checking automatic installation, service selection, controls, editing rollback, auto-restart management and deletion without touching shared sshd or exposing private keys. The setup-order test checks that a failed initial SSH test installs a retrying service, and that canceled host verification still prevents installation.
+
+The integration tests need OpenSSH, Python 3, curl, iproute and systemd tools. `integration.sh` creates a temporary localhost SSH daemon and tests real HTTP forwarding in both directions, rejection of shell sessions, timeout logging and menu recovery; ports `32222` through `32226` must be free. `systemd-order.sh` additionally needs running systemd and free ports `32322` through `32325`. It installs temporary, uniquely named services, verifies real forwarding when either side finishes last, and cleans up its own units and boot links. These tests do not modify production sshd configuration or accounts. VPS connectivity and production capacity are not covered by these local tests.
 
 ## License
 

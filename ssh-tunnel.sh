@@ -266,7 +266,7 @@ write_unit() {
   ssh_path=$(command -v ssh)
   {
     printf '[Unit]\nDescription=SSH V2Ray tunnel %s (%s)\nWants=network-online.target\nAfter=network-online.target\nStartLimitIntervalSec=0\n\n' "$NAME" "$MODE"
-    printf '[Service]\nType=simple\nUser=root\nExecStart=%s' "$ssh_path"
+    printf '[Service]\nType=simple\nUser=root\nRuntimeDirectory=ssh-v2ray-%s\nRuntimeDirectoryMode=0700\nExecStart=%s -M -S /run/ssh-v2ray-%s/control' "$NAME" "$ssh_path" "$NAME"
     printf ' %s' "${SSH_ARGS[@]}"
     printf '\nRestart=always\nRestartSec=5\nTimeoutStopSec=10\nUMask=0077\n'
     printf 'NoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=yes\n\n[Install]\nWantedBy=multi-user.target\n'
@@ -289,7 +289,7 @@ receiver() {
       ssh-keygen -lf "/home/$ACCOUNT/.ssh/authorized_keys"
     fi
     show_host_fingerprints
-    say 'Continue Setup on the other server using the same tunnel name.'
+    say 'Complete the other server if needed. An installed tunnel service reconnects automatically.'
     return 0
   fi
   ! id "$ACCOUNT" >/dev/null 2>&1 || die "Account $ACCOUNT already exists. Choose another tunnel name."
@@ -368,7 +368,7 @@ receiver() {
   show_host_fingerprints
   say "Allow SSH port $SSH_PORT/TCP in the firewall."
   [[ $MODE != reverse ]] || say "Also allow user entry port $LISTEN_PORT/TCP in the Iran firewall."
-  say 'Continue Setup on the other server, with the same name.'
+  say 'If the other server is already set up, its tunnel service will connect automatically.'
 }
 show_host_fingerprints() {
   say 'Host key fingerprints of this server. Compare these on the SSH initiator:'
@@ -387,6 +387,8 @@ trust_host() {
   [[ -s $scanned ]] || die 'No host key was received.'
   ssh-keygen -lf "$scanned"
   say 'Compare these fingerprints with the receiver output. keyscan alone does not verify identity.'
+  say 'Before receiver setup, get its fingerprints by running this command on that server:'
+  printf '  for key in /etc/ssh/ssh_host_*_key.pub; do ssh-keygen -lf "$key"; done\n'
   if ! confirm 'Do the fingerprints match the SSH receiver?'; then
     rm -f "$scanned"
     return 1
@@ -412,8 +414,7 @@ initiator() {
   else
     say 'On Kharej: run 2) Setup Direct -> 2) Kharej, and paste this key.'
   fi
-  say 'You can keep this terminal open while preparing the other server.'
-  confirm 'Is the other server ready with this public key?' || return 0
+  say 'You can finish this server now and register the public key on the other server later.'
   if [[ $MODE == reverse ]]; then
     get_host REMOTE 'Iran server IPv4 address or hostname'
   else
@@ -436,18 +437,25 @@ initiator() {
   fi
   trust_host || return 0
   build_ssh_args
-  # Save BEFORE testing so failures remain diagnosable from the menu.
+  install_tunnel_service
+}
+install_tunnel_service() {
+  # An unprepared receiver must not prevent installing the retrying service.
   save_summary
-  connection_test || return 1
+  if ! connection_test; then
+    warn 'The first SSH test failed. Installing the service so it can retry automatically.'
+  fi
   write_unit "$UNIT_DIR/$UNIT"
   printf '%s\n' "$MODE" > "$DIR/initiator"
   systemctl daemon-reload
   systemctl enable --now "$UNIT"
   sleep 2
-  if systemctl is-active --quiet "$UNIT"; then
-    ok 'Tunnel service is running and will restart automatically.'
+  ok 'Tunnel service installed. It starts after boot and retries automatically.'
+  if tunnel_connected; then
+    ok 'SSH tunnel is connected.'
   else
-    warn 'The service did not stay running. Recent logs:'
+    warn 'Waiting for SSH. Once the other server is ready, the tunnel will connect automatically.'
+    warn 'If it stays Waiting, check the key, SSH settings, firewall and Recent Logs.'
     journalctl -u "$UNIT" -n 40 --no-pager
   fi
   say "Client address: IRAN_IP | Client port: $LISTEN_PORT | UUID: your existing VLESS UUID"
@@ -482,7 +490,7 @@ explain_failure() {
   say 'Last 80 lines of the SSH debug log:'
   tail -n 80 "$DIR/test.log"
   warn "Full log: $DIR/test.log"
-  say 'Use Manage Tunnels -> select this service -> View Recent Logs. To retry, run Setup again.'
+  say 'Use Manage Tunnels -> select this service -> View Recent Logs. Installed services retry automatically.'
 }
 connection_test() {
   say "Testing SSH -> $ACCOUNT@$REMOTE:$SSH_PORT (maximum 30 seconds)..."
@@ -509,11 +517,15 @@ connection_test() {
 clear_screen() {
   if [[ -t 0 && -t 1 && ${TERM:-dumb} != dumb ]]; then printf '\033[H\033[2J'; fi
 }
+tunnel_connected() {
+  local control=/run/ssh-v2ray-$NAME/control
+  [[ -S $control ]] && timeout 2s ssh -F /dev/null -S "$control" -O check localhost >/dev/null 2>&1
+}
 profile_info() {
   select_profile "$1"
   P_KIND=key P_MODE='-' P_ENTRY='-' P_REMOTE='-' P_SSH='-' P_BACKEND='-'
   P_STATE='Not set up' P_AUTO='-' P_BOOT='-'
-  local field value restart
+  local field value restart runtime
   if [[ -f $DIR/summary ]]; then
     P_STATE=Incomplete
     while IFS='=' read -r field value; do
@@ -527,6 +539,10 @@ profile_info() {
     P_KIND=service P_MODE=$(cat "$DIR/initiator")
     P_STATE=$(systemctl is-active "$UNIT" 2>/dev/null || true)
     case $P_STATE in active|inactive|failed|activating|deactivating) ;; *) P_STATE=unknown;; esac
+    runtime=$(systemctl show -p RuntimeDirectory --value "$UNIT" 2>/dev/null || true)
+    if [[ $runtime == ssh-v2ray-$NAME && ( $P_STATE == active || $P_STATE == activating ) ]]; then
+      if tunnel_connected; then P_STATE=active; else P_STATE=Waiting; fi
+    fi
     restart=$(systemctl show -p Restart --value "$UNIT" 2>/dev/null || true)
     case $restart in no) P_AUTO=No;; always|on-*) P_AUTO=Yes;; *) P_AUTO='-';; esac
     if systemctl is-enabled --quiet "$UNIT" 2>/dev/null; then P_BOOT=Yes; else P_BOOT=No; fi
