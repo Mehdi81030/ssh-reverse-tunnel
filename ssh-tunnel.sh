@@ -265,7 +265,7 @@ receiver() {
   fi
   rm -f "$DIR/public-key.check"
   say "Restricted account: $ACCOUNT | Mode: $MODE | Allowed destination: $TARGET"
-  confirm 'Set up this SSH receiver?' || return 0
+  confirm 'Create Tunnel?' || return 0
 
   # Keep the account usable for pubkey auth, but give it an unknown random password.
   # Password auth is also disabled in the account's Match section.
