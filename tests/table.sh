@@ -20,8 +20,8 @@ printf 'temporary-key\n' > "$BASE/c-key/id_ed25519"
 list_profiles <<< $'99\nx\n2\nn\n3\ny\nr\n0' > "$scratch/output.txt"
 [[ -d $BASE/a-live && -d $BASE/b-receiver && ! -e $BASE/c-key ]]
 [[ -f $DROP/00-ssh-v2ray-b-receiver.conf ]]
-grep -q 'a-live.*Initiator.*reverse.*60250.*active' "$scratch/output.txt"
-grep -q 'b-receiver.*Receiver.*direct.*Configured' "$scratch/output.txt"
+grep -q 'a-live.*reverse.*60250.*active' "$scratch/output.txt"
+grep -q 'b-receiver.*direct.*Configured' "$scratch/output.txt"
 grep -q "Delete tunnel 'c-key'" "$scratch/output.txt"
 grep -q 'That row does not exist' "$scratch/output.txt"
 grep -q 'Enter a valid row number' "$scratch/output.txt"

@@ -449,33 +449,33 @@ connection_test() {
 }
 list_profiles() {
   need_runtime
-  local profile name role mode entry state field value choice index row_color
-  local border='+----+----------------------+-----------+---------+-----------+--------------+'
+  local profile name mode entry state field value choice index row_color
+  local border='+----+----------------------+---------+-----------+--------------+'
   local -a rows=()
   while :; do
     rows=()
     say 'TUNNELS ON THIS SERVER'
     printf '%s%s\n' "$C_CYAN" "$border"
-    printf '| %-2s | %-20s | %-9s | %-7s | %-9s | %-12s |\n' '#' 'Name' 'Role' 'Mode' 'Iran port' 'Status'
+    printf '| %-2s | %-20s | %-7s | %-9s | %-12s |\n' '#' 'Name' 'Mode' 'Iran port' 'Status'
     printf '%s%s\n' "$border" "$C_RESET"
     for profile in "$BASE"/*; do
       [[ -d $profile && ! -L $profile ]] || continue
       name=${profile##*/}
       [[ $name =~ ^[a-z][a-z0-9-]{0,19}$ ]] || continue
       rows+=("$name")
-      mode='-' entry='-' role='Key only' state='Not set up'
+      mode='-' entry='-' state='Not set up'
       if [[ -f $profile/summary ]]; then
-        role='Pending' state='Incomplete'
+        state='Incomplete'
         while IFS='=' read -r field value; do
           case $field in Mode) mode=$value;; IranPort) entry=$value;; esac
         done < "$profile/summary"
       fi
       if [[ -f $profile/initiator ]]; then
-        role='Initiator' mode=$(cat "$profile/initiator")
+        mode=$(cat "$profile/initiator")
         state=$(systemctl is-active "ssh-v2ray-$name.service" 2>/dev/null || true)
         case $state in active|inactive|failed|activating|deactivating) ;; *) state='unknown';; esac
       elif [[ -f $profile/receiver ]]; then
-        role='Receiver' mode=$(cat "$profile/receiver") state='Configured'
+        mode=$(cat "$profile/receiver") state='Configured'
         if [[ -f $DROP/00-ssh-v2ray-$name.conf ]]; then
           while read -r field value; do
             if [[ $field == PermitListen && $value == 0.0.0.0:* ]]; then entry=${value##*:}; fi
@@ -489,14 +489,13 @@ list_profiles() {
       row_color=$C_YELLOW
       [[ $state != active && $state != Configured ]] || row_color=$C_GREEN
       [[ $state != failed ]] || row_color=$C_RED
-      printf '%s| %-2s | %-20s | %-9s | %-7s | %-9s | %-12s |%s\n' "$row_color" "${#rows[@]}" "$name" "$role" "$mode" "$entry" "$state" "$C_RESET"
+      printf '%s| %-2s | %-20s | %-7s | %-9s | %-12s |%s\n' "$row_color" "${#rows[@]}" "$name" "$mode" "$entry" "$state" "$C_RESET"
     done
     printf '%s%s%s\n' "$C_CYAN" "$border" "$C_RESET"
     if (( ${#rows[@]} == 0 )); then
       say 'No tunnels have been configured yet.'
       return 0
     fi
-    warn 'Receiver = prepared here; its tunnel service runs on the other server.'
     printf '\n  Enter a row number to delete that tunnel.\n  r = Refresh table | 0 = Back\n'
     ask choice 'Delete row / action' '0'
     case ${choice,,} in

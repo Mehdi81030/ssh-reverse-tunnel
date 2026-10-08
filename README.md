@@ -86,7 +86,7 @@ Kharej must allow its SSH port, and Iran must allow the client entry port. The b
 | 5 | Public Key |
 | 0 | Exit |
 
-Option **3** shows the profile name, local role, mode, Iran entry port (when known), and local status. Enter a row number to delete that profile and confirm its name. The table refreshes after deletion; enter `r` to refresh or `0` to return. Deletion affects this server only. Remove the matching profile on the other server separately.
+Option **3** shows the profile name, mode, Iran entry port (when known), and local status. Enter a row number to delete that profile and confirm its name. The table refreshes after deletion; enter `r` to refresh or `0` to return. Deletion affects this server only. Remove the matching profile on the other server separately.
 
 `Configured` means the receiver's local configuration is prepared; the actual tunnel service runs on the initiator. `active` means the local service is running. Test with a real client to confirm end-to-end service health.
 
