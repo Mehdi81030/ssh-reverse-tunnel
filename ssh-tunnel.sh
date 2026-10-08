@@ -767,10 +767,8 @@ quick_setup() {
     [[ $location == 1 || $location == 2 ]] && break
   done
   if [[ $QUICK_MODE == reverse && $location == 1 ]] || [[ $QUICK_MODE == direct && $location == 2 ]]; then
-    say 'This server receives SSH. The other server starts the tunnel.'
     receiver
   else
-    say 'This server starts SSH. First copy its public key to the other server.'
     initiator
   fi
 }
