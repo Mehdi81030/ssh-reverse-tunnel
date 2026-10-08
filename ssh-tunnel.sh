@@ -1,7 +1,17 @@
 #!/usr/bin/env bash
 # SSH TCP tunnel manager for Linux + systemd. Run as root on each server.
 set -Eeuo pipefail
-export LC_ALL=C
+# Readline needs a UTF-8 locale to erase a complete Persian character.
+UI_LOCALE=C
+if command -v locale >/dev/null; then
+  for locale_candidate in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+    if [[ $(LC_ALL="$locale_candidate" locale charmap 2>/dev/null) == UTF-8 ]]; then
+      UI_LOCALE=$locale_candidate
+      break
+    fi
+  done
+fi
+export LC_ALL=$UI_LOCALE
 umask 077
 BASE=/etc/ssh-v2ray-tunnel
 DROP=/etc/ssh/sshd_config.d
@@ -19,23 +29,73 @@ say() { printf '\n%s%s%s%s\n' "$C_BOLD" "$C_WHITE" "$*" "$C_RESET"; }
 ok() { printf '\n%s[OK] %s%s\n' "$C_GREEN" "$*" "$C_RESET"; }
 warn() { printf '\n%s[NOTE] %s%s\n' "$C_YELLOW" "$*" "$C_RESET"; }
 die() { printf '\n%s[ERROR] %s%s\n' "$C_RED" "$*" "$C_RESET" >&2; exit 1; }
+clean_input() {
+  local ui_text=$1 ui_clean='' ui_char ui_last ui_byte ui_index ui_number
+  local -a ui_fa=(۰ ۱ ۲ ۳ ۴ ۵ ۶ ۷ ۸ ۹) ui_ar=(٠ ١ ٢ ٣ ٤ ٥ ٦ ٧ ٨ ٩)
+  for ((ui_index=0; ui_index<${#ui_text}; ui_index++)); do
+    ui_char=${ui_text:ui_index:1}
+    case $ui_char in
+      $'\b'|$'\177')
+        if [[ $UI_LOCALE == C ]]; then
+          # Non-UTF-8 fallback: erase all bytes of the last UTF-8 character.
+          while [[ -n $ui_clean ]]; do
+            ui_last=${ui_clean: -1}
+            ui_clean=${ui_clean%?}
+            printf -v ui_byte '%d' "'$ui_last"
+            (( ui_byte >= 128 && ui_byte <= 191 )) || break
+          done
+        else
+          ui_clean=${ui_clean%?}
+        fi;;
+      $'\025') ui_clean='';;
+      $'\r') ;;
+      *) ui_clean+=$ui_char;;
+    esac
+  done
+  ui_clean=${ui_clean#"${ui_clean%%[![:space:]]*}"}
+  ui_clean=${ui_clean%"${ui_clean##*[![:space:]]}"}
+  # Normalize numeric answers only; do not rewrite public keys or hostnames.
+  ui_number=$ui_clean
+  for ((ui_index=0; ui_index<10; ui_index++)); do
+    ui_number=${ui_number//${ui_fa[ui_index]}/$ui_index}
+    ui_number=${ui_number//${ui_ar[ui_index]}/$ui_index}
+  done
+  if [[ $ui_number =~ ^[0-9]+$ ]]; then ui_clean=$ui_number; fi
+  UI_INPUT=$ui_clean
+}
+read_input() {
+  local ui_destination=$1 ui_raw UI_INPUT
+  if [[ -t 0 ]]; then
+    IFS= read -e -r ui_raw || return 1
+  else
+    IFS= read -r ui_raw || return 1
+  fi
+  clean_input "$ui_raw"
+  printf -v "$ui_destination" '%s' "$UI_INPUT"
+}
 ask() {
   local ask_label=$2 ask_default=${3:-} ask_input
   if [[ -n $ask_default ]]; then
     printf '%s > %s%s%s [%s]%s: ' "$C_RED" "$C_WHITE" "$ask_label" "$C_GRAY" "$ask_default" "$C_RESET"
-    read -r ask_input || exit 1
+    read_input ask_input || exit 1
     ask_input=${ask_input:-$ask_default}
   else
     printf '%s > %s%s%s: ' "$C_RED" "$C_WHITE" "$ask_label" "$C_RESET"
-    read -r ask_input || exit 1
+    read_input ask_input || exit 1
   fi
   printf -v "$1" '%s' "$ask_input"
 }
 confirm() {
   local answer
-  printf '%s > %s%s%s (y/n)%s: ' "$C_RED" "$C_WHITE" "$1" "$C_GRAY" "$C_RESET"
-  read -r answer || return 1
-  [[ ${answer,,} == yes || ${answer,,} == y ]]
+  while :; do
+    printf '%s > %s%s%s (y/n)%s: ' "$C_RED" "$C_WHITE" "$1" "$C_GRAY" "$C_RESET"
+    read_input answer || return 1
+    case ${answer,,} in
+      y|yes) return 0;;
+      n|no|'') return 1;;
+      *) warn 'Enter y or n.';;
+    esac
+  done
 }
 get_name() {
   while :; do
@@ -264,7 +324,6 @@ receiver() {
     die 'The public key is invalid.'
   fi
   rm -f "$DIR/public-key.check"
-  say "Restricted account: $ACCOUNT | Mode: $MODE | Allowed destination: $TARGET"
   confirm 'Create Tunnel?' || return 0
 
   # Keep the account usable for pubkey auth, but give it an unknown random password.
@@ -784,7 +843,7 @@ run_action() {
   fi
   local pause_answer
   printf '\n%sPress Enter to return to the menu...%s' "$C_YELLOW" "$C_RESET"
-  read -r pause_answer || exit 0
+  read_input pause_answer || exit 0
 }
 menu_item() {
   printf '  %s%2s)%s %s%s%-21s%s %s%s%s\n' \

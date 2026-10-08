@@ -15,6 +15,8 @@ sudo bash ssh-tunnel.sh
 
 Or clone this repository and run `sudo bash ssh-tunnel.sh`. **Colors are enabled by default; no extra flag is needed.** The interface uses cyan tables and section headings, green active states, yellow options, red stop/delete actions, and white values. Disable colors only when needed with `--no-color` or `NO_COLOR=1`.
 
+Prompts support UTF-8 editing with Backspace, Delete and arrow keys. If you erase a mistyped character, only the final text is validated. Persian and Arabic digits are accepted in numeric answers such as ports and menu selections.
+
 ```text
   1) Setup Reverse         Kharej connects to Iran
   2) Setup Direct          Iran connects to Kharej
@@ -157,13 +159,15 @@ Only copy public keys between servers. SSH encrypts the server-to-server segment
 
 ```bash
 bash -n ssh-tunnel.sh
+bash tests/input.sh
+python3 tests/input.py
 bash tests/dependencies.sh
 bash tests/table.sh
 bash tests/service-menu.sh
 sudo bash tests/integration.sh
 ```
 
-The dependency and service-menu tests mock package managers/systemctl, checking automatic installation, service selection, controls, editing rollback, auto-restart management and deletion without touching shared sshd or exposing private keys. The integration test needs OpenSSH, Python 3, curl, iproute and systemd tools. It creates a temporary localhost SSH daemon and tests real HTTP forwarding in both directions, rejection of shell sessions, timeout logging and menu recovery. Ports `32222` through `32226` must be free. It does not modify the host's production sshd configuration or accounts. VPS connectivity and production capacity are not covered by these local tests.
+The input tests check UTF-8 corrections and numeric answers, including real terminal editing with the kernel's UTF-8 erase setting disabled. The dependency and service-menu tests mock package managers/systemctl, checking automatic installation, service selection, controls, editing rollback, auto-restart management and deletion without touching shared sshd or exposing private keys. The integration test needs OpenSSH, Python 3, curl, iproute and systemd tools. It creates a temporary localhost SSH daemon and tests real HTTP forwarding in both directions, rejection of shell sessions, timeout logging and menu recovery. Ports `32222` through `32226` must be free. It does not modify the host's production sshd configuration or accounts. VPS connectivity and production capacity are not covered by these local tests.
 
 ## License
 
