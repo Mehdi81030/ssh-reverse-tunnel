@@ -1,0 +1,13 @@
+# Runtime credentials and connection details must never be committed.
+id_ed25519*
+authorized_keys
+known_hosts*
+*.log
+*.stderr
+.env
+.env.*
+__pycache__/
+*.pyc
+*.bak
+*.tmp
+test-control-*
