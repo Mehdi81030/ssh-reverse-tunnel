@@ -16,6 +16,9 @@ umask 077
 BASE=/etc/ssh-v2ray-tunnel
 DROP=/etc/ssh/sshd_config.d
 UNIT_DIR=/etc/systemd/system
+SSHD_CONFIG=/etc/ssh/sshd_config
+HOME_ROOT=/home
+RUNTIME_ROOT=/run
 [[ ${1:-} == --help ]] && { printf 'Usage: sudo bash %s [--no-color]\nColors are enabled by default. Linux + systemd; TCP forwarding only.\nSee README-fa.md.\n' "$0"; exit 0; }
 C_RESET='' C_CYAN='' C_GREEN='' C_RED='' C_YELLOW='' C_BOLD='' C_WHITE='' C_GRAY=''
 if [[ -z ${NO_COLOR:-} && ${1:-} != --no-color ]]; then
@@ -172,7 +175,7 @@ ensure_tools() {
   need_runtime
   local role=$1 cmd
   local -a required=(ssh ssh-keygen ssh-keyscan timeout ss) missing=()
-  if [[ $role == receiver ]]; then required+=(openssl useradd userdel pkill); fi
+  if [[ $role == receiver ]]; then required+=(openssl useradd userdel pkill getent); fi
   for cmd in "${required[@]}"; do
     command -v "$cmd" >/dev/null || missing+=("$cmd")
   done
@@ -266,7 +269,7 @@ write_unit() {
   ssh_path=$(command -v ssh)
   {
     printf '[Unit]\nDescription=SSH V2Ray tunnel %s (%s)\nWants=network-online.target\nAfter=network-online.target\nStartLimitIntervalSec=0\n\n' "$NAME" "$MODE"
-    printf '[Service]\nType=simple\nUser=root\nRuntimeDirectory=ssh-v2ray-%s\nRuntimeDirectoryMode=0700\nExecStart=%s -M -S /run/ssh-v2ray-%s/control' "$NAME" "$ssh_path" "$NAME"
+    printf '[Service]\nType=simple\nUser=root\nRuntimeDirectory=ssh-v2ray-%s\nRuntimeDirectoryMode=0700\nExecStart=%s -M -S %s/ssh-v2ray-%s/control' "$NAME" "$ssh_path" "$RUNTIME_ROOT" "$NAME"
     printf ' %s' "${SSH_ARGS[@]}"
     printf '\nRestart=always\nRestartSec=5\nTimeoutStopSec=10\nUMask=0077\n'
     printf 'NoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=yes\n\n[Install]\nWantedBy=multi-user.target\n'
@@ -336,12 +339,12 @@ receiver() {
     [[ $(cat "$DIR/receiver") == "$MODE" ]] || die 'This profile uses the other mode. Use another name.'
     ok "This server is already prepared for $MODE (account: $ACCOUNT)."
     [[ ! -f $SNIPPET ]] || cat "$SNIPPET"
-    if [[ -f /home/$ACCOUNT/.ssh/authorized_keys ]]; then
+    if [[ -f $HOME_ROOT/$ACCOUNT/.ssh/authorized_keys ]]; then
       say 'Fingerprint of the public key currently authorized here:'
-      ssh-keygen -lf "/home/$ACCOUNT/.ssh/authorized_keys" || warn 'The stored public key could not be read.'
+      ssh-keygen -lf "$HOME_ROOT/$ACCOUNT/.ssh/authorized_keys" || warn 'The stored public key could not be read.'
     fi
     ask PUBLIC_KEY 'Paste new ssh-ed25519 public key (Enter to keep current)'
-    if [[ -n $PUBLIC_KEY ]]; then update_receiver_key "/home/$ACCOUNT"; fi
+    if [[ -n $PUBLIC_KEY ]]; then update_receiver_key "$HOME_ROOT/$ACCOUNT"; fi
     show_host_fingerprints
     say 'Complete the other server if needed. An installed tunnel service reconnects automatically.'
     return 0
@@ -379,7 +382,7 @@ receiver() {
   random_password=$(openssl rand -hex 32)
   password_hash=$(printf '%s' "$random_password" | openssl passwd -6 -stdin)
   unset random_password
-  home_dir=/home/$ACCOUNT
+  home_dir=$HOME_ROOT/$ACCOUNT
   [[ ! -e $home_dir ]] || die 'The account home directory already exists. Choose another name.'
   useradd --system --create-home --home-dir "$home_dir" --shell /bin/sh --password "$password_hash" "$ACCOUNT"
   unset password_hash
@@ -393,14 +396,14 @@ receiver() {
   write_receiver_snippet
   # Ensure drop-ins are read in global context, before any existing Match blocks.
   backup=$DIR/sshd_config.before
-  cp -p /etc/ssh/sshd_config "$backup"
-  if ! head -n 1 /etc/ssh/sshd_config | grep -Fxq 'Include /etc/ssh/sshd_config.d/*.conf'; then
-    { printf 'Include /etc/ssh/sshd_config.d/*.conf\n'; cat "$backup"; } > "$DIR/sshd_config.new"
-    cat "$DIR/sshd_config.new" > /etc/ssh/sshd_config
+  cp -p "$SSHD_CONFIG" "$backup"
+  if ! head -n 1 "$SSHD_CONFIG" | grep -Fxq "Include $DROP/*.conf"; then
+    { printf 'Include %s/*.conf\n' "$DROP"; cat "$backup"; } > "$DIR/sshd_config.new"
+    cat "$DIR/sshd_config.new" > "$SSHD_CONFIG"
     rm -f "$DIR/sshd_config.new"
   fi
-  if ! "$SSHD" -t; then
-    cp -p "$backup" /etc/ssh/sshd_config
+  if ! "$SSHD" -t -f "$SSHD_CONFIG"; then
+    cp -p "$backup" "$SSHD_CONFIG"
     rm -f "$SNIPPET"
     userdel -r "$ACCOUNT" 2>/dev/null || true
     rm -f "$DIR/receiver"
@@ -485,6 +488,7 @@ initiator() {
 }
 install_tunnel_service() {
   # An unprepared receiver must not prevent installing the retrying service.
+  local started_at
   save_summary
   if ! connection_test; then
     warn 'The first SSH test failed. Installing the service so it can retry automatically.'
@@ -492,6 +496,7 @@ install_tunnel_service() {
   write_unit "$UNIT_DIR/$UNIT"
   printf '%s\n' "$MODE" > "$DIR/initiator"
   systemctl daemon-reload
+  started_at=$(date +%s)
   systemctl enable --now "$UNIT"
   sleep 2
   ok 'Tunnel service installed. It starts after boot and retries automatically.'
@@ -500,7 +505,7 @@ install_tunnel_service() {
   else
     warn 'Waiting for SSH. Once the other server is ready, the tunnel will connect automatically.'
     warn 'If it stays Waiting, check the key, SSH settings, firewall and Recent Logs.'
-    journalctl -u "$UNIT" -n 40 --no-pager
+    journalctl -u "$UNIT" --since "@$started_at" -n 40 --no-pager
   fi
   say "Client address: IRAN_IP | Client port: $LISTEN_PORT | UUID: your existing VLESS UUID"
   warn "Allow $LISTEN_PORT/TCP in the Iran firewall. Test with a real VLESS client."
@@ -562,7 +567,7 @@ clear_screen() {
   if [[ -t 0 && -t 1 && ${TERM:-dumb} != dumb ]]; then printf '\033[H\033[2J'; fi
 }
 tunnel_connected() {
-  local control=/run/ssh-v2ray-$NAME/control
+  local control=$RUNTIME_ROOT/ssh-v2ray-$NAME/control
   [[ -S $control ]] && timeout 2s ssh -F /dev/null -S "$control" -O check localhost >/dev/null 2>&1
 }
 profile_info() {
@@ -739,7 +744,7 @@ show_service_status() {
     systemctl --no-pager --full status "$UNIT" || true
   elif [[ $P_KIND == receiver ]]; then
     find_sshd
-    "$SSHD" -t
+    "$SSHD" -t -f "$SSHD_CONFIG"
     ok 'Dedicated SSH configuration is valid.'
     if [[ $P_ENTRY =~ ^[0-9]+$ ]]; then ss -ltnp "sport = :$P_ENTRY"; fi
   else
@@ -844,36 +849,79 @@ service_action() {
     9) remove_profile "$NAME";;
   esac
 }
+stop_receiver_sessions() {
+  local attempt
+  # pkill sends a signal asynchronously; userdel requires the processes to exit.
+  pkill -TERM -u "$ACCOUNT" 2>/dev/null || true
+  for ((attempt=0; attempt<50; attempt++)); do
+    if ! pkill -0 -u "$ACCOUNT" 2>/dev/null; then return 0; fi
+    sleep 0.1
+  done
+  pkill -KILL -u "$ACCOUNT" 2>/dev/null || true
+  for ((attempt=0; attempt<50; attempt++)); do
+    if ! pkill -0 -u "$ACCOUNT" 2>/dev/null; then return 0; fi
+    sleep 0.1
+  done
+  die 'The tunnel account still has running processes. Removal is not complete; retry after checking them.'
+}
 remove_profile() {
   need_runtime
   if [[ -n ${1:-} ]]; then select_profile "$1"; else get_name; fi
   [[ -d $DIR ]] || die 'This name does not exist.'
+  [[ $DIR == "$BASE/$NAME" && ! -L $DIR ]] || die 'Invalid removal path.'
   say "Removing $NAME affects only this server. Remove the other side separately."
   confirm "Delete tunnel '$NAME', including its service, private key and dedicated account?" || return 0
-  if [[ -f $DIR/receiver ]]; then
+  local unit_state home_dir account_home runtime_dir had_snippet=false
+  unit_state=$(systemctl show -p LoadState --value "$UNIT" 2>/dev/null || true)
+  if [[ -f $DIR/initiator || -e $UNIT_DIR/$UNIT || -e $UNIT_DIR/$UNIT.d/ssh-tunnel-auto-restart.conf || $unit_state == loaded ]]; then
+    if [[ $unit_state == not-found ]]; then
+      systemctl disable "$UNIT" >/dev/null 2>&1 || true
+    else
+      systemctl disable --now "$UNIT" || die 'Could not stop and disable the tunnel service. Removal is not complete.'
+    fi
+    rm -f "$UNIT_DIR/$UNIT" "$UNIT_DIR/$UNIT.d/ssh-tunnel-auto-restart.conf"
+    if [[ -d $UNIT_DIR/$UNIT.d ]]; then rmdir "$UNIT_DIR/$UNIT.d" 2>/dev/null || true; fi
+    systemctl daemon-reload
+    systemctl reset-failed "$UNIT" >/dev/null 2>&1 || true
+    if systemctl is-active --quiet "$UNIT"; then die 'The tunnel service is still active. Removal is not complete.'; fi
+    if systemctl is-enabled --quiet "$UNIT" 2>/dev/null; then die 'The tunnel service is still enabled. Removal is not complete.'; fi
+  fi
+  if [[ -f $DIR/receiver || -f $SNIPPET ]]; then
+    if [[ ! -f $DIR/receiver ]]; then
+      grep -Fxq "# Managed by ssh-v2ray-tunnel: $NAME" "$SNIPPET" || die 'This SSH configuration is not marked as managed by this tunnel.'
+    fi
     find_sshd
-    [[ -f $SNIPPET ]] || die 'The dedicated SSH configuration file is missing. Review the configuration before removing it manually.'
-    cp -p "$SNIPPET" "$DIR/snippet.before-delete"
-    rm -f "$SNIPPET"
-    if ! "$SSHD" -t; then
-      cp -p "$DIR/snippet.before-delete" "$SNIPPET"
+    if [[ -f $SNIPPET ]]; then
+      had_snippet=true
+      cp -p "$SNIPPET" "$DIR/snippet.before-delete"
+      rm -f "$SNIPPET"
+    fi
+    if ! "$SSHD" -t -f "$SSHD_CONFIG"; then
+      if $had_snippet; then cp -p "$DIR/snippet.before-delete" "$SNIPPET"; fi
       die 'SSH configuration is invalid. Removal was cancelled.'
     fi
     reload_sshd
     # Existing SSH connections survive a reload. Terminate only this dedicated account.
-    pkill -u "$ACCOUNT" 2>/dev/null || true
-    if id "$ACCOUNT" >/dev/null 2>&1; then userdel -r "$ACCOUNT"; fi
+    home_dir=$HOME_ROOT/$ACCOUNT
+    if id "$ACCOUNT" >/dev/null 2>&1; then
+      account_home=$(getent passwd "$ACCOUNT" | cut -d: -f6)
+      [[ $account_home == "$home_dir" ]] || die 'The tunnel account has an unexpected home directory. Removal is not complete.'
+      stop_receiver_sessions
+      userdel -r "$ACCOUNT" || die 'Could not delete the tunnel account. Removal is not complete.'
+      ! id "$ACCOUNT" >/dev/null 2>&1 || die 'The tunnel account still exists. Removal is not complete.'
+    fi
+    [[ $home_dir == "$HOME_ROOT/svt-$NAME" && ! -L $home_dir ]] || die 'Invalid receiver home removal path.'
+    rm -rf -- "$home_dir"
   fi
-  if [[ -f $DIR/initiator ]]; then
-    systemctl disable --now "$UNIT"
-    rm -f "$UNIT_DIR/$UNIT"
-    rm -f "$UNIT_DIR/$UNIT.d/ssh-tunnel-auto-restart.conf"
-    if [[ -d $UNIT_DIR/$UNIT.d ]]; then rmdir "$UNIT_DIR/$UNIT.d" 2>/dev/null || true; fi
-    systemctl daemon-reload
+  runtime_dir=$RUNTIME_ROOT/ssh-v2ray-$NAME
+  if tunnel_connected; then
+    timeout 5s ssh -F /dev/null -S "$runtime_dir/control" -O exit localhost >/dev/null 2>&1 || die 'Could not close the remaining SSH connection.'
   fi
-  [[ $DIR == "$BASE/"* && $DIR != "$BASE/" ]] || die 'Invalid removal path.'
+  [[ ! -L $runtime_dir ]] || die 'Invalid runtime removal path.'
+  rm -rf -- "$runtime_dir"
   rm -rf -- "$DIR"
-  say 'Profile removed. Installed prerequisites and the shared SSH Include remain.'
+  [[ ! -e $DIR && ! -e $SNIPPET ]] || die 'Tunnel files remain. Removal is not complete.'
+  ok 'Tunnel removed. Its profile, keys, service and managed receiver account are cleared.'
 }
 quick_setup() {
   QUICK_MODE=$1

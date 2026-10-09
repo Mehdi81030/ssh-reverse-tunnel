@@ -17,13 +17,14 @@ need_runtime() { :; }
 find_sshd() { SSHD=/bin/true; }
 systemd-analyze() { [[ $1 == verify && -s $2 ]]; }
 FAIL_RESTART=0
+BOOT_ENABLED=1
 systemctl() {
   local policy
   case $1 in
     is-active)
       if [[ $2 != --quiet ]]; then cat "$state_file"; fi
       [[ $(cat "$state_file") == active ]];;
-    is-enabled) return 0;;
+    is-enabled) [[ $BOOT_ENABLED == 1 ]];;
     show)
       policy=always
       if [[ -f $UNIT_DIR/ssh-v2ray-main.service.d/ssh-tunnel-auto-restart.conf ]]; then
@@ -36,7 +37,12 @@ systemctl() {
       [[ $2 == ssh-v2ray-main.service ]] || return 1
       if [[ $1 == restart && $FAIL_RESTART == 1 ]]; then return 1; fi
       if [[ $1 == stop ]]; then printf 'inactive\n' > "$state_file"; else printf 'active\n' > "$state_file"; fi;;
-    daemon-reload|disable) printf '%s\n' "$*" >> "$calls";;
+    daemon-reload|disable)
+      printf '%s\n' "$*" >> "$calls"
+      if [[ $1 == disable ]]; then
+        BOOT_ENABLED=0
+        if [[ ${2:-} == --now ]]; then printf 'inactive\n' > "$state_file"; fi
+      fi;;
     *) return 1;;
   esac
 }

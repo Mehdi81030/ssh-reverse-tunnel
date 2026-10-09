@@ -123,7 +123,9 @@ Editing validates the entered addresses and ports, verifies the host fingerprint
 
 Auto-restart management changes the selected tunnel's systemd restart policy. Applying it to an active tunnel restarts that tunnel after confirmation. This setting is separate from starting the service after boot.
 
-To delete, select the service, choose **9**, and confirm its name. Deletion affects this server only. Remove the matching profile on the other server separately.
+To delete, select the service, choose **9**, and confirm its name. Deletion affects this server only. Remove the matching profile on the other server separately. Receiver deletion waits for the dedicated account's processes to exit before removing the account and its home directory; it force-stops remaining processes if necessary. Partial profiles can be cleaned up even if their service marker or SSH snippet is missing. Service cleanup stops and disables the named unit, removes its generated file and owned override, clears failed state and its control socket, and checks that it is no longer active or enabled. A failed deletion retains the profile and reports the failure.
+
+Deleting both ends removes the key pair. Rebuilding creates a new public key: copy that new line to the receiver rather than reusing a key from an earlier setup.
 
 For multiple Kharej servers, use a different tunnel name and Iran entry port for each. Backend ports may be identical on separate servers. This does not provide automatic load balancing or failover between backends.
 
@@ -176,13 +178,17 @@ bash tests/table.sh
 bash tests/service-menu.sh
 bash tests/setup-order.sh
 bash tests/receiver-key.sh
+bash tests/removal.sh
 sudo bash tests/integration.sh
 sudo bash tests/systemd-order.sh
+sudo bash tests/recreate.sh
 ```
 
-The input tests check UTF-8 corrections and numeric answers, including real terminal editing with the kernel's UTF-8 erase setting disabled. The dependency and service-menu tests mock package managers/systemctl, checking automatic installation, service selection, controls, editing rollback, auto-restart management and deletion without touching shared sshd or exposing private keys. The setup-order test checks that a failed initial SSH test installs a retrying service, and that canceled host verification still prevents installation. The receiver-key test checks replacement, backups, unchanged forwarding permissions, rejection of invalid keys, and keeping the existing key with Enter.
+The input tests check UTF-8 corrections and numeric answers, including real terminal editing with the kernel's UTF-8 erase setting disabled. The dependency and service-menu tests mock package managers/systemctl, checking automatic installation, service selection, controls, editing rollback, auto-restart management and deletion without touching shared sshd or exposing private keys. The setup-order test checks that a failed initial SSH test installs a retrying service, and that canceled host verification still prevents installation. The receiver-key test checks replacement, backups, unchanged forwarding permissions, rejection of invalid keys, and keeping the existing key with Enter. The removal test covers partial profiles, waiting for account processes, SSH validation rollback and service-stop failures.
 
 The integration tests need OpenSSH, Python 3, curl, iproute and systemd tools. `integration.sh` creates a temporary localhost SSH daemon and tests real HTTP forwarding in both directions, rejection of shell sessions, timeout logging and menu recovery; ports `32222` through `32226` must be free. `systemd-order.sh` additionally needs running systemd and free ports `32322` through `32325`. It installs temporary, uniquely named services, verifies real forwarding when either side finishes last (including reconnecting after replacing a stale receiver key), and cleans up its own units and boot links. These tests do not modify production sshd configuration or accounts. VPS connectivity and production capacity are not covered by these local tests.
+
+`recreate.sh` requires root, running systemd and free ports `32422` through `32425`. It creates its own temporary account, home directory, SSH daemon and tunnel unit. It tests real forwarding, deletes both profiles and rebuilds using the same name in both modes, including a process that ignores TERM. It removes only its temporary account/unit and leaves production SSH configuration untouched.
 
 ## License
 
