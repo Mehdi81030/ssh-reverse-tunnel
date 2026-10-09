@@ -46,7 +46,8 @@ show_host_fingerprints() { :; }
 useradd() { die 'Existing receiver recreated its account.'; }
 reload_sshd() { die 'Key update reloaded SSH.'; }
 update_receiver_key() {
-  [[ $1 == /home/svt-main && $PUBLIC_KEY == "$(cat "$scratch/new.pub")" ]]
+  [[ $1 == /home/svt-main ]]
+  [[ $(printf '%s\n' "$PUBLIC_KEY" | awk '{print $1,$2}') == "$(awk '{print $1,$2}' "$scratch/new.pub")" ]]
   printf 'updated\n' > "$scratch/ui-update"
 }
 mkdir -p "$BASE/main"
@@ -57,3 +58,23 @@ receiver <<< $'main\n' > "$scratch/keep.txt"
 receiver <<< "main"$'\n'"$(cat "$scratch/new.pub")" > "$scratch/replace.txt"
 [[ -f $scratch/ui-update ]]
 echo 'PASS existing receiver menu: Enter keeps the key; pasted key updates without recreating account'
+
+# A setup link updates an existing receiver with no extra name/port/key questions.
+select_profile main
+cp "$scratch/new" "$DIR/id_ed25519"
+MODE=reverse REMOTE=receiver.example.org SSH_PORT=2299 LISTEN_PORT=8443 V2_PORT=443
+TARGET=0.0.0.0:8443
+write_receiver_snippet
+make_setup_link
+rm -f "$scratch/ui-update"
+import_setup_link "$SETUP_LINK" <<< y > "$scratch/import.txt"
+[[ -f $scratch/ui-update ]]
+grep -q '^SSHPort=2299$' "$DIR/summary"
+cp "$DIR/summary" "$scratch/summary-before"
+LISTEN_PORT=8444
+make_setup_link
+rm -f "$scratch/ui-update"
+if (import_setup_link "$SETUP_LINK" <<< y) > "$scratch/ports.txt" 2>&1; then exit 1; fi
+[[ ! -f $scratch/ui-update ]]
+cmp "$DIR/summary" "$scratch/summary-before"
+echo 'PASS existing receiver link: matching settings update key; changed permissions require a fresh profile'

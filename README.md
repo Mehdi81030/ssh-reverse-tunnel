@@ -22,12 +22,14 @@ Prompts support UTF-8 editing with Backspace, Delete and arrow keys. If you eras
   2) Setup Direct          Iran connects to Kharej
   3) Manage Tunnels        select a service, view details and actions
   4) Public Key            generate or copy your public key
+  L) Import Setup Link     configure this server from a peer setup link
   0) Exit                  close this menu
 ```
 
 ## Features
 
 - Guided setup: choose Reverse or Direct, then choose Iran or Kharej.
+- A setup link and ready-to-run command transfer the receiver settings and public key automatically.
 - Missing tools are installed automatically during setup; existing tools are reused.
 - Dedicated SSH account limited to the requested forwarding operation, with shell sessions disabled.
 - Reuses existing Ed25519 keys and asks you to compare host key fingerprints.
@@ -68,6 +70,18 @@ Client -> Iran:8443 -> SSH tunnel -> Kharej:127.0.0.1:443 -> VLESS
 
 At **Config port on kharej**, enter the VLESS inbound port, not the web panel port. The backend address is fixed to `127.0.0.1` on Kharej, so there is no backend-address question. The service must listen there or have its container port published on the host. The Iran entry port and the config port may differ. The restricted account requires reverse entry ports to be **1024 or higher**.
 
+## Setup with a link
+
+For setup with one link, **start on Kharej in Reverse mode**, or **Iran in Direct mode**. Complete the initiator setup using the receiver address, SSH port, Iran entry port and config port on Kharej. The receiver's ordinary SSH must be reachable so you can verify its host fingerprints. Registering the tunnel account can happen later; the installed initiator waits and retries.
+
+At the end, the initiator prints a **`ssh-tunnel://v1/...` Setup Link** and a command that downloads this script and imports the link on the receiver. On the other server, run that command as root, or choose **L: Import Setup Link** and paste the link. The mode, profile name, ports and public key are filled automatically. Review the displayed settings and answer **Create Tunnel?**; the waiting initiator then connects automatically.
+
+The link contains receiver settings and the **public key only**. The private key stays on the initiator. Export derives the public part from the actual private key, so a stale `.pub` file is not copied into the link. Links are decoded and validated as data; imported content is never evaluated as shell code. Existing receiver profiles can accept a link with the same forwarding permission to update the key. Changed receiver ports require removing the old profile before importing.
+
+For an existing initiator, select its service in **Manage Tunnels** and choose **10: Show Setup Link**. This generates a fresh link from the current saved settings. The one-link workflow starts on the initiator; manual setup below still supports completing either side last.
+
+SSH itself does not require matching local service names. This manager derives the receiver account as `svt-NAME`, so its manual workflow requires the same profile name on both servers. Importing a setup link fills that name automatically.
+
 ## Reverse setup
 
 1. Run the script on both machines. Required tools are prepared automatically when you start setup.
@@ -100,6 +114,7 @@ Kharej must allow its SSH port, and Iran must allow the client entry port. The b
 | 2 | Set up Direct |
 | 3 | Manage Tunnels: service table and actions |
 | 4 | Public Key |
+| L | Import Setup Link |
 | 0 | Exit |
 
 Option **3** shows **Service Name, Status, Mode and Auto Restart**. Enter a row number to open that service's details and actions. Enter `r` to refresh the table or `0` to return. Selecting a row does not delete anything.
@@ -115,6 +130,7 @@ The details box shows the Iran entry port, SSH peer/port, V2Ray endpoint, auto-r
 | 7 | View Configuration without showing private key contents |
 | 8 | Auto-Restart Management using systemd |
 | 9 | Delete Service after confirming its name |
+| 10 | Show Setup Link for the other server |
 | 0 | Back to the table |
 
 Start/Stop/Restart, Edit and Auto-Restart controls appear on the server running the dedicated tunnel service. On an SSH receiver, status, logs, configuration and deletion are available; shared sshd is not stopped or restarted from this page. `configured` means receiver settings are prepared. New services show `Waiting` while trying to establish SSH and `active` once their SSH control connection is available. Older services without a control socket still report process status. Test with a real client to confirm backend health. `Auto Restart: Remote` means its policy is managed on the other server.
@@ -177,6 +193,7 @@ bash tests/dependencies.sh
 bash tests/table.sh
 bash tests/service-menu.sh
 bash tests/setup-order.sh
+bash tests/setup-link.sh
 bash tests/receiver-key.sh
 bash tests/removal.sh
 sudo bash tests/integration.sh
@@ -184,11 +201,11 @@ sudo bash tests/systemd-order.sh
 sudo bash tests/recreate.sh
 ```
 
-The input tests check UTF-8 corrections and numeric answers, including real terminal editing with the kernel's UTF-8 erase setting disabled. The dependency and service-menu tests mock package managers/systemctl, checking automatic installation, service selection, controls, editing rollback, auto-restart management and deletion without touching shared sshd or exposing private keys. The setup-order test checks that a failed initial SSH test installs a retrying service, and that canceled host verification still prevents installation. The receiver-key test checks replacement, backups, unchanged forwarding permissions, rejection of invalid keys, and keeping the existing key with Enter. The removal test covers partial profiles, waiting for account processes, SSH validation rollback and service-stop failures.
+The input tests check UTF-8 corrections and numeric answers, including real terminal editing with the kernel's UTF-8 erase setting disabled. The dependency and service-menu tests mock package managers/systemctl, checking automatic installation, service selection, controls, editing rollback, auto-restart management and deletion without touching shared sshd or exposing private keys. The setup-order test checks that a failed initial SSH test installs a retrying service, and that canceled host verification still prevents installation. The setup-link test checks data round-tripping, actual public-key derivation, and rejection of malformed/duplicate/unknown fields and shell expressions. The receiver-key test checks replacement, backups, unchanged forwarding permissions, rejection of invalid keys, and keeping the existing key with Enter. The removal test covers partial profiles, waiting for account processes, SSH validation rollback and service-stop failures.
 
 The integration tests need OpenSSH, Python 3, curl, iproute and systemd tools. `integration.sh` creates a temporary localhost SSH daemon and tests real HTTP forwarding in both directions, rejection of shell sessions, timeout logging and menu recovery; ports `32222` through `32226` must be free. `systemd-order.sh` additionally needs running systemd and free ports `32322` through `32325`. It installs temporary, uniquely named services, verifies real forwarding when either side finishes last (including reconnecting after replacing a stale receiver key), and cleans up its own units and boot links. These tests do not modify production sshd configuration or accounts. VPS connectivity and production capacity are not covered by these local tests.
 
-`recreate.sh` requires root, running systemd and free ports `32422` through `32425`. It creates its own temporary account, home directory, SSH daemon and tunnel unit. It tests real forwarding, deletes both profiles and rebuilds using the same name in both modes, including a process that ignores TERM. It removes only its temporary account/unit and leaves production SSH configuration untouched.
+`recreate.sh` requires root, running systemd and free ports `32422` through `32425`. It creates its own temporary account, home directory, SSH daemon and tunnel unit. It tests real forwarding, deletes both profiles and rebuilds using the same name in both modes, including a process that ignores TERM. The second cycle creates the receiver entirely from a setup link, with only the final creation confirmation. It removes only its temporary account/unit and leaves production SSH configuration untouched.
 
 ## License
 

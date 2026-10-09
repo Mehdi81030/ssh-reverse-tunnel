@@ -19,7 +19,7 @@ UNIT_DIR=/etc/systemd/system
 SSHD_CONFIG=/etc/ssh/sshd_config
 HOME_ROOT=/home
 RUNTIME_ROOT=/run
-[[ ${1:-} == --help ]] && { printf 'Usage: sudo bash %s [--no-color]\nColors are enabled by default. Linux + systemd; TCP forwarding only.\nSee README-fa.md.\n' "$0"; exit 0; }
+[[ ${1:-} == --help ]] && { printf 'Usage: sudo bash %s [--no-color | --import SETUP_LINK]\nColors are enabled by default. Linux + systemd; TCP forwarding only.\nSee README-fa.md.\n' "$0"; exit 0; }
 C_RESET='' C_CYAN='' C_GREEN='' C_RED='' C_YELLOW='' C_BOLD='' C_WHITE='' C_GRAY=''
 if [[ -z ${NO_COLOR:-} && ${1:-} != --no-color ]]; then
   C_RESET=$'\033[0m' C_RED=$'\033[31m' C_WHITE=$'\033[37m'
@@ -174,7 +174,7 @@ install_tools() {
 ensure_tools() {
   need_runtime
   local role=$1 cmd
-  local -a required=(ssh ssh-keygen ssh-keyscan timeout ss) missing=()
+  local -a required=(ssh ssh-keygen ssh-keyscan timeout ss base64) missing=()
   if [[ $role == receiver ]]; then required+=(openssl useradd userdel pkill getent); fi
   for cmd in "${required[@]}"; do
     command -v "$cmd" >/dev/null || missing+=("$cmd")
@@ -290,6 +290,79 @@ write_authorized_key() {
   if [[ $MODE == reverse ]]; then permission=permitlisten; else permission=permitopen; fi
   printf 'restrict,port-forwarding,%s="%s" %s\n' "$permission" "$TARGET" "$PUBLIC_KEY" > "$1"
 }
+encode_setup_data() { base64 --wrap=0 | tr -- '+/' '-_' | tr -d '='; }
+parse_setup_link() {
+  local link=$1 encoded decoded padded field value
+  local -A fields=()
+  [[ ${#link} -le 16384 && $link =~ ^ssh-tunnel://v1/([A-Za-z0-9_-]+)$ ]] || die 'Invalid setup link.'
+  encoded=${BASH_REMATCH[1]}
+  padded=${encoded//-/+}
+  padded=${padded//_/\/}
+  while (( ${#padded} % 4 != 0 )); do padded+='='; done
+  decoded=$(printf '%s' "$padded" | base64 --decode 2>/dev/null) || die 'Invalid setup link encoding.'
+  [[ $(printf '%s' "$decoded" | encode_setup_data) == "$encoded" ]] || die 'Invalid setup link data.'
+  while IFS='=' read -r field value; do
+    case $field in Kind|Name|Mode|Receiver|SSHPort|IranPort|ConfigPort|PublicKey) ;; *) die 'Unknown setup link field.';; esac
+    [[ ! ${fields[$field]+present} ]] || die 'Duplicate setup link field.'
+    fields[$field]=$value
+  done <<< "$decoded"
+  for field in Kind Name Mode Receiver SSHPort IranPort ConfigPort PublicKey; do
+    [[ -n ${fields[$field]:-} ]] || die 'Incomplete setup link.'
+  done
+  [[ ${fields[Kind]} == receiver ]] || die 'Unsupported setup link type.'
+  [[ ${fields[Name]} =~ ^[a-z][a-z0-9-]{0,19}$ ]] || die 'Invalid tunnel name in setup link.'
+  [[ ${fields[Mode]} == reverse || ${fields[Mode]} == direct ]] || die 'Invalid setup link mode.'
+  [[ ${fields[Receiver]} =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ ]] || die 'Invalid receiver address in setup link.'
+  for field in SSHPort IranPort ConfigPort; do
+    value=${fields[$field]}
+    [[ $value =~ ^[0-9]{1,5}$ ]] || die 'Invalid setup link port.'
+    (( 10#$value >= 1 && 10#$value <= 65535 )) || die 'Invalid setup link port.'
+    fields[$field]=$((10#$value))
+  done
+  if [[ ${fields[Mode]} == reverse ]]; then
+    (( fields[IranPort] >= 1024 && fields[IranPort] != fields[SSHPort] )) || die 'Invalid reverse entry port in setup link.'
+  fi
+  value=${fields[PublicKey]}
+  [[ $value =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+(\ [A-Za-z0-9._-]+)?$ ]] || die 'Invalid public key in setup link.'
+  printf '%s\n' "$value" | ssh-keygen -lf /dev/stdin >/dev/null 2>&1 || die 'Invalid public key in setup link.'
+  LINK_NAME=${fields[Name]} LINK_MODE=${fields[Mode]} LINK_RECEIVER=${fields[Receiver]}
+  LINK_SSH_PORT=${fields[SSHPort]} LINK_IRAN_PORT=${fields[IranPort]} LINK_CONFIG_PORT=${fields[ConfigPort]}
+  LINK_PUBLIC_KEY=${fields[PublicKey]}
+}
+make_setup_link() {
+  local public payload key_type key_data key_comment
+  [[ -s $DIR/id_ed25519 ]] || die 'This profile has no initiator private key.'
+  public=$(ssh-keygen -y -f "$DIR/id_ed25519") || die 'Could not derive the public key.'
+  IFS=' ' read -r key_type key_data key_comment <<< "$public"
+  public="$key_type $key_data"
+  payload=$(printf 'Kind=receiver\nName=%s\nMode=%s\nReceiver=%s\nSSHPort=%s\nIranPort=%s\nConfigPort=%s\nPublicKey=%s ssh-v2ray-%s' \
+    "$NAME" "$MODE" "$REMOTE" "$SSH_PORT" "$LISTEN_PORT" "$V2_PORT" "$public" "$NAME")
+  SETUP_LINK=ssh-tunnel://v1/$(printf '%s' "$payload" | encode_setup_data)
+  parse_setup_link "$SETUP_LINK"
+}
+show_setup_link() {
+  local location
+  make_setup_link
+  if [[ $MODE == reverse ]]; then location=Iran; else location=Kharej; fi
+  say "Setup Link: paste on $location using L) Import Setup Link."
+  printf '%s%s%s\n' "$C_GREEN" "$SETUP_LINK" "$C_RESET"
+  say "Or run this command as root on $location:"
+  printf "curl -fL --retry 3 -o ssh-tunnel.sh https://raw.githubusercontent.com/Mehdi81030/ssh-reverse-tunnel/main/ssh-tunnel.sh && bash ssh-tunnel.sh --import '%s'\n" "$SETUP_LINK"
+}
+import_setup_link() {
+  local incoming=${1:-} SETUP_LINK_IMPORT=1
+  need_runtime
+  ensure_tools receiver
+  if [[ -z $incoming ]]; then ask incoming 'Paste Setup Link'; fi
+  parse_setup_link "$incoming"
+  if [[ $LINK_MODE == reverse ]]; then
+    say "Target server: Iran ($LINK_RECEIVER)"
+  else
+    say "Target server: Kharej ($LINK_RECEIVER)"
+  fi
+  say "Tunnel: $LINK_NAME | Mode: $LINK_MODE | SSH port: $LINK_SSH_PORT | Iran entry: $LINK_IRAN_PORT | Config port on kharej: $LINK_CONFIG_PORT"
+  receiver
+}
 update_receiver_key() {
   local home_dir=$1 field value rest destination='' port key_file temporary
   validate_public_key
@@ -328,12 +401,19 @@ update_receiver_key() {
   ok 'Public key updated. The other server will reconnect automatically.'
 }
 receiver() {
+  local expected_permission
   need_runtime
   ensure_tools receiver
   find_sshd
   ensure_sshd_service
-  get_name
-  get_mode
+  if [[ ${SETUP_LINK_IMPORT:-0} == 1 ]]; then
+    select_profile "$LINK_NAME"
+    MODE=$LINK_MODE
+    SSH_PORT=$LINK_SSH_PORT LISTEN_PORT=$LINK_IRAN_PORT BACKEND=127.0.0.1 V2_PORT=$LINK_CONFIG_PORT
+  else
+    get_name
+    get_mode
+  fi
   [[ ! -f $DIR/initiator ]] || die 'This name is already used for an initiator on this server. Choose another name.'
   if [[ -f $DIR/receiver ]]; then
     [[ $(cat "$DIR/receiver") == "$MODE" ]] || die 'This profile uses the other mode. Use another name.'
@@ -343,8 +423,19 @@ receiver() {
       say 'Fingerprint of the public key currently authorized here:'
       ssh-keygen -lf "$HOME_ROOT/$ACCOUNT/.ssh/authorized_keys" || warn 'The stored public key could not be read.'
     fi
-    ask PUBLIC_KEY 'Paste new ssh-ed25519 public key (Enter to keep current)'
+    if [[ ${SETUP_LINK_IMPORT:-0} == 1 ]]; then
+      PUBLIC_KEY=$LINK_PUBLIC_KEY
+      confirm 'Apply Setup Link?' || return 0
+      if [[ $MODE == reverse ]]; then expected_permission="PermitListen 0.0.0.0:$LINK_IRAN_PORT"
+      else expected_permission="PermitOpen 127.0.0.1:$LINK_CONFIG_PORT"; fi
+      if ! awk '{$1=$1; print}' "$SNIPPET" | grep -Fxq "$expected_permission"; then
+        die 'Existing receiver ports differ from this link. Remove this profile before importing changed ports.'
+      fi
+    else
+      ask PUBLIC_KEY 'Paste new ssh-ed25519 public key (Enter to keep current)'
+    fi
     if [[ -n $PUBLIC_KEY ]]; then update_receiver_key "$HOME_ROOT/$ACCOUNT"; fi
+    if [[ ${SETUP_LINK_IMPORT:-0} == 1 ]]; then save_receiver_summary; fi
     show_host_fingerprints
     say 'Complete the other server if needed. An installed tunnel service reconnects automatically.'
     return 0
@@ -352,8 +443,12 @@ receiver() {
   ! id "$ACCOUNT" >/dev/null 2>&1 || die "Account $ACCOUNT already exists. Choose another tunnel name."
   [[ ! -e $SNIPPET ]] || die 'An SSH configuration file with this name already exists. Choose another name.'
   if [[ $MODE == reverse ]]; then
-    get_port LISTEN_PORT 'User entry port on Iran' '8443'
-    get_port SSH_PORT 'SSH port of this Iran server' '22'
+    if [[ ${SETUP_LINK_IMPORT:-0} == 1 ]]; then
+      LISTEN_PORT=$LINK_IRAN_PORT SSH_PORT=$LINK_SSH_PORT
+    else
+      get_port LISTEN_PORT 'User entry port on Iran' '8443'
+      get_port SSH_PORT 'SSH port of this Iran server' '22'
+    fi
     [[ $LISTEN_PORT != "$SSH_PORT" ]] || die 'The user entry port must differ from the SSH port.'
     (( LISTEN_PORT >= 1024 )) || die 'The restricted account requires a reverse port of 1024 or higher, e.g. 8443.'
     if command -v ss >/dev/null && [[ -n $(ss -H -ltn "sport = :$LISTEN_PORT") ]]; then
@@ -362,16 +457,23 @@ receiver() {
     TARGET=0.0.0.0:$LISTEN_PORT
   else
     BACKEND=127.0.0.1
-    get_port V2_PORT 'Config port on kharej' '443'
-    get_port SSH_PORT 'SSH port of this Kharej server' '22'
+    if [[ ${SETUP_LINK_IMPORT:-0} == 1 ]]; then
+      V2_PORT=$LINK_CONFIG_PORT SSH_PORT=$LINK_SSH_PORT
+    else
+      get_port V2_PORT 'Config port on kharej' '443'
+      get_port SSH_PORT 'SSH port of this Kharej server' '22'
+    fi
     TARGET=$BACKEND:$V2_PORT
   fi
-  if [[ $MODE == reverse ]]; then
+  if [[ ${SETUP_LINK_IMPORT:-0} == 1 ]]; then
+    PUBLIC_KEY=$LINK_PUBLIC_KEY
+  elif [[ $MODE == reverse ]]; then
     say 'First run: 1) Setup Reverse -> 2) Kharej, on the Kharej server.'
+    ask PUBLIC_KEY 'Paste the complete ssh-ed25519 public key line'
   else
     say 'First run: 2) Setup Direct -> 1) Iran, on the Iran server.'
+    ask PUBLIC_KEY 'Paste the complete ssh-ed25519 public key line'
   fi
-  ask PUBLIC_KEY 'Paste the complete ssh-ed25519 public key line'
   validate_public_key
   mkdir -p "$DROP"
   confirm 'Create Tunnel?' || return 0
@@ -410,12 +512,15 @@ receiver() {
     die 'SSH configuration validation failed. SSH changes were rolled back.'
   fi
   reload_sshd
-  printf 'Mode=%s\nRemote=-\nSSHPort=%s\nIranPort=%s\nBackend=%s:%s\n' "$MODE" "$SSH_PORT" "${LISTEN_PORT:--}" "${BACKEND:--}" "${V2_PORT:--}" > "$DIR/summary"
+  save_receiver_summary
   ok "Receiver ready. Tunnel: $NAME | SSH user: $ACCOUNT | SSH port: $SSH_PORT"
   show_host_fingerprints
   say "Allow SSH port $SSH_PORT/TCP in the firewall."
   [[ $MODE != reverse ]] || say "Also allow user entry port $LISTEN_PORT/TCP in the Iran firewall."
   say 'If the other server is already set up, its tunnel service will connect automatically.'
+}
+save_receiver_summary() {
+  printf 'Mode=%s\nRemote=-\nSSHPort=%s\nIranPort=%s\nBackend=%s:%s\n' "$MODE" "$SSH_PORT" "${LISTEN_PORT:--}" "${BACKEND:--}" "${V2_PORT:--}" > "$DIR/summary"
 }
 show_host_fingerprints() {
   say 'Host key fingerprints of this server. Compare these on the SSH initiator:'
@@ -509,6 +614,7 @@ install_tunnel_service() {
   fi
   say "Client address: IRAN_IP | Client port: $LISTEN_PORT | UUID: your existing VLESS UUID"
   warn "Allow $LISTEN_PORT/TCP in the Iran firewall. Test with a real VLESS client."
+  show_setup_link
 }
 save_summary() {
   printf 'Mode=%s\nRemote=%s\nSSHPort=%s\nIranPort=%s\nBackend=%s:%s\n' "$MODE" "$REMOTE" "$SSH_PORT" "$LISTEN_PORT" "$BACKEND" "$V2_PORT" > "$DIR/summary"
@@ -721,6 +827,7 @@ render_service() {
   service_action_line 7 '[c]' "$C_CYAN" 'View Configuration'
   if [[ $P_KIND == service ]]; then service_action_line 8 '[a]' "$C_YELLOW" 'Auto-Restart Management'; fi
   service_action_line 9 '[x]' "$C_RED" 'Delete Service'
+  if [[ $P_KIND == service ]]; then service_action_line 10 '[l]' "$C_CYAN" 'Show Setup Link'; fi
   service_action_line 0 '[<]' "$C_CYAN" 'Back'
   if [[ $P_KIND == receiver ]]; then
     warn 'Start, Stop and Auto-Restart are managed on the other server. Auto Restart: Remote.'
@@ -734,7 +841,7 @@ service_menu() {
     ask action 'Select an action' '0'
     [[ $action != 0 ]] || return 0
     case $action in
-      1|2|3|4|5|6|7|8|9) run_action service_action "$action";;
+      1|2|3|4|5|6|7|8|9|10) run_action service_action "$action";;
       *) warn 'Invalid action';;
     esac
   done
@@ -847,6 +954,10 @@ service_action() {
     7) show_service_config;;
     8) auto_restart_menu;;
     9) remove_profile "$NAME";;
+    10)
+      [[ $P_KIND == service ]] || { warn 'Create the initiator first to generate a setup link.'; return 0; }
+      MODE=$P_MODE REMOTE=$P_REMOTE SSH_PORT=$P_SSH LISTEN_PORT=$P_ENTRY V2_PORT=${P_BACKEND##*:}
+      show_setup_link;;
   esac
 }
 stop_receiver_sessions() {
@@ -973,6 +1084,7 @@ BANNER
   menu_item 2 'Setup Direct' 'Iran connects to Kharej'
   menu_item 3 'Manage Tunnels' 'select a service, view details and actions'
   menu_item 4 'Public Key' 'generate or copy your public key'
+  menu_item L 'Import Setup Link' 'configure this server from the other server link'
   menu_item 0 'Exit' 'close this menu'
   printf '\n%s---------------------------------------------------------------%s\n' "$C_GRAY" "$C_RESET"
   printf '  %sGitHub: Mehdi81030/ssh-reverse-tunnel%s\n\n' "$C_GRAY" "$C_RESET"
@@ -986,8 +1098,16 @@ main() {
     case $choice in
       1) run_action quick_setup reverse;; 2) run_action quick_setup direct;;
       3) run_action list_profiles;; 4) run_action make_key;; 0) exit 0;;
+      l|L) run_action import_setup_link;;
       *) say 'Invalid option';;
     esac
   done
 }
-if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main; fi
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  if [[ ${1:-} == --import ]]; then
+    [[ $# == 2 ]] || die 'Usage: bash ssh-tunnel.sh --import SETUP_LINK'
+    import_setup_link "$2"
+  else
+    main
+  fi
+fi

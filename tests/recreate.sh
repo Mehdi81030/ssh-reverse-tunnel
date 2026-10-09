@@ -82,10 +82,18 @@ for mode in reverse direct; do
     fingerprint=$(ssh-keygen -lf "$DIR/id_ed25519.pub")
     [[ $fingerprint != "$prior_fingerprint" ]]
     prior_fingerprint=$fingerprint
+    MODE=$mode REMOTE=127.0.0.1 SSH_PORT=32422 BACKEND=127.0.0.1 V2_PORT=32423
+    if [[ $mode == reverse ]]; then LISTEN_PORT=32424; else LISTEN_PORT=32425; fi
+    make_setup_link
+    peer_link=$SETUP_LINK
     BASE=$receiver_base
     UNIT_DIR=$scratch/receiver-units RUNTIME_ROOT=$scratch/receiver-runtime
     QUICK_MODE=$mode
-    if [[ $mode == reverse ]]; then
+    if [[ $cycle == 2 ]]; then
+      # The receiver gets every field from the link; only Create Tunnel? is answered.
+      import_setup_link "$peer_link" <<< y > "$scratch/receiver.txt"
+      entry=$LISTEN_PORT
+    elif [[ $mode == reverse ]]; then
       receiver <<< "$test_name"$'\n32424\n32422\n'"$public_key"$'\ny' > "$scratch/receiver.txt"
       entry=32424
     else
