@@ -19,6 +19,11 @@ expect_input 'mainس' 'mainس'
 get_port PORT test 8443 <<< $'س\177۸۴۴۳' >/dev/null
 [[ $PORT == 8443 ]]
 get_name <<< $'س\177' >/dev/null
+[[ $NAME =~ ^tunnel-[0-9a-f]{12}$ ]]
+first_name=$NAME
+get_name <<< '' >/dev/null
+[[ $NAME =~ ^tunnel-[0-9a-f]{12}$ && $NAME != "$first_name" ]]
+get_name <<< 'main' >/dev/null
 [[ $NAME == main ]]
 confirm test <<< $'wrong\ny' >/dev/null
 if confirm test <<< 'n' >/dev/null; then exit 1; fi

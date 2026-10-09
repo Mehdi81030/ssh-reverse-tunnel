@@ -74,6 +74,8 @@ At **Config port on kharej**, enter the VLESS inbound port, not the web panel po
 
 For setup with one link, **start on Kharej in Reverse mode**, or **Iran in Direct mode**. Complete the initiator setup using the receiver address, SSH port, Iran entry port and config port on Kharej. The receiver's ordinary SSH must be reachable so you can verify its host fingerprints. Registering the tunnel account can happen later; the installed initiator waits and retries.
 
+The name prompt suggests a fresh random name such as `tunnel-a1b2c3d4e5f6` instead of `main`. Press Enter to accept it, or enter your own name. The setup link carries this exact name to the other server. Use a separate name and Iran entry port for each Kharej server. Existing profiles keep their names; when managing or rebuilding one, enter its existing name. In manual setup, copy the first server's name to the second rather than accepting a second random suggestion.
+
 At the end, the initiator prints a **`ssh-tunnel://v1/...` Setup Link** and a command that downloads this script and imports the link on the receiver. On the other server, run that command as root, or choose **L: Import Setup Link** and paste the link. The mode, profile name, ports and public key are filled automatically. Review the displayed settings and answer **Create Tunnel?**; the waiting initiator then connects automatically.
 
 The link contains receiver settings and the **public key only**. The private key stays on the initiator. Export derives the public part from the actual private key, so a stale `.pub` file is not copied into the link. Links are decoded and validated as data; imported content is never evaluated as shell code. An existing receiver in the same mode can apply a link to update its port permissions, public key and saved settings without deleting its account. Changed permissions or keys reconnect only this tunnel's account sessions. An identical link keeps existing sessions. Backups are saved before applying; configuration validation, file update or SSH reload failures restore the previous files. A reverse entry port occupied by another listener is rejected before changing settings. Open the new entry port in the Iran firewall separately. The link does not change sshd's listening port.
@@ -85,7 +87,7 @@ SSH itself does not require matching local service names. This manager derives t
 ## Reverse setup
 
 1. Run the script on both machines. Required tools are prepared automatically when you start setup.
-2. On **Kharej**, choose **1: Setup Reverse**, then **2: Kharej**. Choose a tunnel name, for example `main`.
+2. On **Kharej**, choose **1: Setup Reverse**, then **2: Kharej**. Accept the random tunnel name or enter your own; keep it for the Iran setup.
 3. Copy the entire displayed `ssh-ed25519 ...` public key line.
 4. On **Iran**, choose **1: Setup Reverse**, then **1: Iran**. Use the same tunnel name, enter the Iran entry port and actual Iran SSH port, and paste the public key.
 5. On Kharej, enter the Iran address, SSH port, Iran entry port and **Config port on kharej**. The backend address is filled automatically as `127.0.0.1`.

@@ -100,9 +100,22 @@ confirm() {
     esac
   done
 }
-get_name() {
+random_tunnel_name() {
+  local candidate
   while :; do
-    ask NAME 'Tunnel name' 'main'
+    candidate=tunnel-$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')
+    [[ $candidate =~ ^tunnel-[0-9a-f]{12}$ ]] || die 'Could not generate a tunnel name.'
+    if [[ ! -e $BASE/$candidate && ! -e $UNIT_DIR/ssh-v2ray-$candidate.service && ! -e $DROP/00-ssh-v2ray-$candidate.conf ]] && ! id "svt-$candidate" >/dev/null 2>&1; then
+      printf '%s' "$candidate"
+      return
+    fi
+  done
+}
+get_name() {
+  local suggested_name
+  suggested_name=$(random_tunnel_name)
+  while :; do
+    ask NAME 'Tunnel name' "$suggested_name"
     [[ $NAME =~ ^[a-z][a-z0-9-]{0,19}$ ]] && break
     say 'Use up to 20 characters, starting with a lowercase letter.'
   done

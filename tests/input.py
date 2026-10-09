@@ -4,6 +4,7 @@ import errno
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import subprocess
 import time
@@ -45,7 +46,8 @@ def check(label, command, prompt, keystrokes, expected, forbidden=()):
             process.wait(timeout=0.5)
         decoded = output.decode("utf-8", errors="replace")
         assert process.returncode == 0, (label, process.returncode, decoded)
-        assert expected in decoded, (label, decoded)
+        assert (expected.search(decoded) if isinstance(expected, re.Pattern)
+                else expected in decoded), (label, decoded)
         for message in forbidden:
             assert message not in decoded, (label, decoded)
         print("PASS terminal input:", label)
@@ -70,7 +72,7 @@ check("Two Persian characters erased", name_command, "Tunnel name",
 check("Arrow keys and Delete edit the middle", name_command, "Tunnel name",
       "maiXn\x1b[D\x1b[D\x1b[3~\r", "RESULT=main", bad_name)
 check("Erased input uses the default", name_command, "Tunnel name",
-      "س\x7f\r", "RESULT=main", bad_name)
+      "س\x7f\r", re.compile(r"RESULT=tunnel-[0-9a-f]{12}\b"), bad_name)
 check("Persian digits accepted as a port", port_command, "Config port",
       "۸۴۴۳\r", "RESULT=8443", bad_port)
 check("Corrected invalid port accepted", port_command, "Config port",
