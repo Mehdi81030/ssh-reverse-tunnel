@@ -43,6 +43,7 @@ mkdir -p "$scratch/receiver-units" "$scratch/receiver-runtime"
 chmod 755 "$HOME_ROOT"
 printf '# unrelated SSH drop-in\n' > "$DROP/00-other.conf"
 ssh-keygen -q -t ed25519 -N '' -f "$scratch/host"
+ssh-keygen -q -t ed25519 -N '' -f "$scratch/stale-key"
 cat > "$SSHD_CONFIG" <<EOF
 Include $DROP/*.conf
 Port 32422
@@ -110,6 +111,34 @@ for mode in reverse direct; do
     profile_info "$test_name"
     [[ $P_STATE == active ]]
     [[ $(curl --fail --silent --max-time 5 "http://127.0.0.1:$entry/probe.txt") == recreated-forwarding ]]
+    if [[ $cycle == 2 ]]; then
+      # Reproduce an existing receiver with stale port/key settings.
+      BASE=$receiver_base
+      UNIT_DIR=$scratch/receiver-units RUNTIME_ROOT=$scratch/receiver-runtime
+      select_profile "$test_name"
+      before_uid=$(id -u "$ACCOUNT")
+      touch "$HOME_ROOT/$ACCOUNT/keep-me"
+      if [[ $mode == reverse ]]; then TARGET=0.0.0.0:32426; else TARGET=127.0.0.1:32426; fi
+      PUBLIC_KEY=$(cat "$scratch/stale-key.pub")
+      write_receiver_snippet
+      write_authorized_key "$HOME_ROOT/$ACCOUNT/.ssh/authorized_keys"
+      reload_sshd
+      stop_receiver_sessions
+      import_setup_link "$peer_link" <<< y > "$scratch/reapply.txt"
+      [[ $(id -u "$ACCOUNT") == "$before_uid" && -f $HOME_ROOT/$ACCOUNT/keep-me ]]
+      [[ -s $DIR/sshd.before-link && -s $DIR/authorized_keys.before-link ]]
+      BASE=$initiator_base
+      UNIT_DIR=/run/systemd/system RUNTIME_ROOT=/run
+      select_profile "$test_name"
+      connected=false
+      for ((attempt=0; attempt<100; attempt++)); do
+        if tunnel_connected; then connected=true; break; fi
+        sleep 0.2
+      done
+      $connected
+      [[ $(curl --fail --silent --max-time 5 "http://127.0.0.1:$entry/probe.txt") == recreated-forwarding ]]
+      echo "PASS $mode existing receiver: link updated stale port/key; account/home preserved; real SSH reconnected and HTTP forwarded"
+    fi
     if [[ $mode == reverse && $cycle == 1 ]]; then
       # TERM alone cannot finish this process: removal must wait then use KILL.
       runuser -u "$test_account" -- bash -c 'trap "" TERM; exec sleep 120' > /dev/null 2>&1 &

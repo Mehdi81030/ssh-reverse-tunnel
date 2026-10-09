@@ -400,8 +400,80 @@ update_receiver_key() {
   if command -v restorecon >/dev/null; then restorecon "$key_file"; fi
   ok 'Public key updated. The other server will reconnect automatically.'
 }
+apply_receiver_link() (
+  # Keep the snapshot and rollback trap in this subshell, including unexpected failures.
+  local home_dir=$1 key_file=$1/.ssh/authorized_keys index changed=false
+  local applied=false committed=false reload_attempted=false config_tmp='' key_tmp='' summary_tmp=''
+  local -a originals=("$SNIPPET" "$key_file" "$DIR/summary")
+  local -a backups=("$DIR/sshd.before-link" "$DIR/authorized_keys.before-link" "$DIR/summary.before-link")
+  local -a existed=(false false false)
+  receiver_link_exit() {
+    local result=$1 restore_failed=false file
+    if $applied && ! $committed; then
+      for ((index=0; index<3; index++)); do
+        if ${existed[index]}; then
+          cp -p -- "${backups[index]}" "${originals[index]}" || restore_failed=true
+        else
+          rm -f -- "${originals[index]}" || restore_failed=true
+        fi
+      done
+      if $reload_attempted; then
+        if ! "$SSHD" -t -f "$SSHD_CONFIG" || ! (reload_sshd); then restore_failed=true; fi
+      fi
+      if $restore_failed; then
+        warn "Rollback could not fully complete. Previous files are saved in $DIR/*.before-link."
+      else
+        warn 'Setup link was not applied. Previous receiver settings and key were restored.'
+      fi
+      (( result != 0 )) || result=1
+    fi
+    for file in "$config_tmp" "$key_tmp" "$summary_tmp"; do
+      [[ -z $file ]] || rm -f -- "$file" || true
+    done
+    return "$result"
+  }
+  trap 'receiver_link_exit $?' EXIT
+  validate_public_key
+  id "$ACCOUNT" >/dev/null 2>&1 || die 'The tunnel account is missing.'
+  [[ -d $DIR && ! -L $DIR && -d $home_dir/.ssh && ! -L $home_dir && ! -L $home_dir/.ssh ]] || die 'Invalid receiver directories.'
+  if [[ $MODE == reverse ]]; then
+    TARGET=0.0.0.0:$LISTEN_PORT
+    # An existing listener on the old permitted port may belong to this tunnel.
+    if ! awk '{$1=$1; print}' "$SNIPPET" 2>/dev/null | grep -Fxq "PermitListen $TARGET"; then
+      [[ -z $(ss -H -ltn "sport = :$LISTEN_PORT") ]] || die 'The requested Iran entry port is already in use.'
+    fi
+  else
+    TARGET=127.0.0.1:$V2_PORT
+  fi
+  for ((index=0; index<3; index++)); do
+    [[ ! -L ${originals[index]} ]] || die 'A receiver configuration file is a symbolic link.'
+    if [[ -f ${originals[index]} ]]; then
+      cp -p -- "${originals[index]}" "${backups[index]}" || die 'Could not back up the receiver settings.'
+      existed[index]=true
+    fi
+  done
+  config_tmp=$(mktemp "$DROP/.ssh-v2ray-$NAME.link.XXXXXX") || die 'Could not prepare receiver configuration.'
+  (SNIPPET=$config_tmp; write_receiver_snippet) || die 'Could not prepare receiver configuration.'
+  key_tmp=$(mktemp "$home_dir/.ssh/authorized_keys.link.XXXXXX") || die 'Could not prepare the receiver public key.'
+  write_authorized_key "$key_tmp" || die 'Could not prepare the receiver public key.'
+  chmod 600 "$key_tmp" || die 'Could not set public key permissions.'
+  chown "$ACCOUNT:$(id -gn "$ACCOUNT")" "$key_tmp" || die 'Could not set public key ownership.'
+  summary_tmp=$(mktemp "$DIR/summary.link.XXXXXX") || die 'Could not prepare receiver settings.'
+  save_receiver_summary "$summary_tmp" || die 'Could not prepare receiver settings.'
+  if ! cmp -s "$config_tmp" "$SNIPPET" || ! cmp -s "$key_tmp" "$key_file"; then changed=true; fi
+  applied=true
+  mv -f -- "$config_tmp" "$SNIPPET" || die 'Could not apply receiver configuration.'
+  "$SSHD" -t -f "$SSHD_CONFIG" || die 'SSH configuration validation failed.'
+  mv -f -- "$key_tmp" "$key_file" || die 'Could not apply receiver public key.'
+  if command -v restorecon >/dev/null; then restorecon "$key_file" "$SNIPPET" || die 'Could not restore receiver file security contexts.'; fi
+  mv -f -- "$summary_tmp" "$DIR/summary" || die 'Could not apply receiver settings.'
+  reload_attempted=true
+  (reload_sshd) || die 'Could not reload the receiver SSH configuration.'
+  if $changed; then stop_receiver_sessions; fi
+  committed=true
+  ok 'Receiver ports and public key updated. The matching tunnel will reconnect automatically.'
+)
 receiver() {
-  local expected_permission
   need_runtime
   ensure_tools receiver
   find_sshd
@@ -426,16 +498,12 @@ receiver() {
     if [[ ${SETUP_LINK_IMPORT:-0} == 1 ]]; then
       PUBLIC_KEY=$LINK_PUBLIC_KEY
       confirm 'Apply Setup Link?' || return 0
-      if [[ $MODE == reverse ]]; then expected_permission="PermitListen 0.0.0.0:$LINK_IRAN_PORT"
-      else expected_permission="PermitOpen 127.0.0.1:$LINK_CONFIG_PORT"; fi
-      if ! awk '{$1=$1; print}' "$SNIPPET" | grep -Fxq "$expected_permission"; then
-        die 'Existing receiver ports differ from this link. Remove this profile before importing changed ports.'
-      fi
+      apply_receiver_link "$HOME_ROOT/$ACCOUNT"
+      [[ $MODE != reverse ]] || say "Allow user entry port $LISTEN_PORT/TCP in the Iran firewall."
     else
       ask PUBLIC_KEY 'Paste new ssh-ed25519 public key (Enter to keep current)'
+      if [[ -n $PUBLIC_KEY ]]; then update_receiver_key "$HOME_ROOT/$ACCOUNT"; fi
     fi
-    if [[ -n $PUBLIC_KEY ]]; then update_receiver_key "$HOME_ROOT/$ACCOUNT"; fi
-    if [[ ${SETUP_LINK_IMPORT:-0} == 1 ]]; then save_receiver_summary; fi
     show_host_fingerprints
     say 'Complete the other server if needed. An installed tunnel service reconnects automatically.'
     return 0
@@ -520,7 +588,7 @@ receiver() {
   say 'If the other server is already set up, its tunnel service will connect automatically.'
 }
 save_receiver_summary() {
-  printf 'Mode=%s\nRemote=-\nSSHPort=%s\nIranPort=%s\nBackend=%s:%s\n' "$MODE" "$SSH_PORT" "${LISTEN_PORT:--}" "${BACKEND:--}" "${V2_PORT:--}" > "$DIR/summary"
+  printf 'Mode=%s\nRemote=-\nSSHPort=%s\nIranPort=%s\nBackend=%s:%s\n' "$MODE" "$SSH_PORT" "${LISTEN_PORT:--}" "${BACKEND:--}" "${V2_PORT:--}" > "${1:-$DIR/summary}"
 }
 show_host_fingerprints() {
   say 'Host key fingerprints of this server. Compare these on the SSH initiator:'
